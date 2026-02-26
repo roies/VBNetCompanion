@@ -20,3 +20,7 @@ Use this folder in an Extension Development Host window to run:
 3. Run `F12` on `FormatMessage` and `Add` calls.
 4. Verify navigation goes to `CSharpLib/Class1.cs`.
 5. Run Find References on `GreeterService.FormatMessage` to verify references from VB are included.
+
+## Repository note
+
+Generated build outputs under `test-workspace/**/bin/` and `test-workspace/**/obj/` are intentionally ignored and not committed.
