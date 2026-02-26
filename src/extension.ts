@@ -1,8 +1,11 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { buildParityReport, getParityGaps, runDotnetParityProbe } from './parityProbe';
-import { DotnetLanguageClientBridge } from './languageClientBridge';
+import { assessBridgeServerCompatibility, DotnetLanguageClientBridge } from './languageClientBridge';
 
 let languageClientBridge: DotnetLanguageClientBridge | undefined;
+const ROSLYN_BRIDGE_BOOTSTRAP_KEY = 'vsextensionforvb.roslynBridgeBootstrapCompleted';
 
 export function activate(context: vscode.ExtensionContext) {
 	const outputChannel = vscode.window.createOutputChannel('VSExtensionForVB');
@@ -19,7 +22,8 @@ export function activate(context: vscode.ExtensionContext) {
 	let refreshInFlight = false;
 	let refreshQueued = false;
 	void promptForMissingDotnetTooling();
-	void languageClientBridge.startFromConfiguration();
+	void autoBootstrapRoslynBridge(context, outputChannel)
+		.finally(() => languageClientBridge?.startFromConfiguration());
 	scheduleParityStatusRefresh(0);
 
 	const showParityStatusCommand = vscode.commands.registerCommand('vsextensionforvb.showParityStatus', async () => {
@@ -159,9 +163,12 @@ export function activate(context: vscode.ExtensionContext) {
 		const parsedArgs = parseCommandLineArgs(argsText);
 
 		await config.update('enableLanguageClientBridge', true, vscode.ConfigurationTarget.Workspace);
+		await config.update('enableBridgeForCSharp', false, vscode.ConfigurationTarget.Workspace);
+		await config.update('enableBridgeForVisualBasic', false, vscode.ConfigurationTarget.Workspace);
 		await config.update('languageClientServerCommand', serverCommand.trim(), vscode.ConfigurationTarget.Workspace);
 		await config.update('languageClientServerArgs', parsedArgs, vscode.ConfigurationTarget.Workspace);
 		await config.update('languageClientTraceLevel', 'messages', vscode.ConfigurationTarget.Workspace);
+		await context.globalState.update(ROSLYN_BRIDGE_BOOTSTRAP_KEY, true);
 
 		await languageClientBridge?.restartFromConfiguration();
 
@@ -175,7 +182,37 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	});
 
-	context.subscriptions.push(showParityStatusCommand, remediateParityGapsCommand, restartDotnetLanguageServicesCommand, restartLanguageClientBridgeCommand, applyRoslynBridgePresetCommand);
+	const checkLanguageClientBridgeCompatibilityCommand = vscode.commands.registerCommand('vsextensionforvb.checkLanguageClientBridgeCompatibility', async () => {
+		const config = vscode.workspace.getConfiguration('vsextensionforvb');
+		const serverCommand = (config.get<string>('languageClientServerCommand', '') ?? '').trim();
+		const compatibility = assessBridgeServerCompatibility(serverCommand);
+
+		if (compatibility.isCompatible) {
+			void vscode.window.showInformationMessage(`Bridge compatibility check passed. ${compatibility.message}`);
+			return;
+		}
+
+		const action = await vscode.window.showWarningMessage(
+			`Bridge compatibility check failed: ${compatibility.message}`,
+			'Open Settings',
+			'Disable Bridge'
+		);
+
+		if (action === 'Open Settings') {
+			await vscode.commands.executeCommand('workbench.action.openSettings', 'vsextensionforvb.languageClientServerCommand');
+			return;
+		}
+
+		if (action === 'Disable Bridge') {
+			const target = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0
+				? vscode.ConfigurationTarget.Workspace
+				: vscode.ConfigurationTarget.Global;
+			await config.update('enableLanguageClientBridge', false, target);
+			void vscode.window.showInformationMessage('Disabled language client bridge due to incompatible configuration.');
+		}
+	});
+
+	context.subscriptions.push(showParityStatusCommand, remediateParityGapsCommand, restartDotnetLanguageServicesCommand, restartLanguageClientBridgeCommand, applyRoslynBridgePresetCommand, checkLanguageClientBridgeCompatibilityCommand);
  	context.subscriptions.push({
 		dispose: () => {
 			if (refreshTimer) {
@@ -195,6 +232,8 @@ export function activate(context: vscode.ExtensionContext) {
 			triggerStatusRefresh();
 			if (
 				event.affectsConfiguration('vsextensionforvb.enableLanguageClientBridge') ||
+				event.affectsConfiguration('vsextensionforvb.enableBridgeForCSharp') ||
+				event.affectsConfiguration('vsextensionforvb.enableBridgeForVisualBasic') ||
 				event.affectsConfiguration('vsextensionforvb.languageClientServerCommand') ||
 				event.affectsConfiguration('vsextensionforvb.languageClientServerArgs') ||
 				event.affectsConfiguration('vsextensionforvb.languageClientTraceLevel')
@@ -385,4 +424,187 @@ export function parseCommandLineArgs(input: string): string[] {
 	}
 
 	return args;
+}
+
+async function autoBootstrapRoslynBridge(context: vscode.ExtensionContext, outputChannel: vscode.OutputChannel): Promise<void> {
+	const config = vscode.workspace.getConfiguration('vsextensionforvb');
+	if (!config.get<boolean>('autoBootstrapRoslynBridge', true)) {
+		return;
+	}
+
+	const companionServerLaunch = detectCompanionServerLaunch(context);
+	const existingServerCommand = (config.get<string>('languageClientServerCommand', '') ?? '').trim();
+	const existingServerArgs = config.get<string[]>('languageClientServerArgs', []) ?? [];
+	const existingCompatibility = assessBridgeServerCompatibility(existingServerCommand);
+	const bridgeEnabled = config.get<boolean>('enableLanguageClientBridge', false);
+	const bridgeForVisualBasic = config.get<boolean>('enableBridgeForVisualBasic', false);
+	const bridgeForCSharp = config.get<boolean>('enableBridgeForCSharp', false);
+
+	if (companionServerLaunch && shouldApplyCompanionBootstrap(
+		existingServerCommand,
+		existingServerArgs,
+		existingCompatibility.isCompatible,
+		bridgeEnabled,
+		bridgeForVisualBasic,
+		bridgeForCSharp,
+		companionServerLaunch
+	)) {
+		const target = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0
+			? vscode.ConfigurationTarget.Workspace
+			: vscode.ConfigurationTarget.Global;
+
+		await config.update('enableLanguageClientBridge', true, target);
+		await config.update('enableBridgeForCSharp', false, target);
+		await config.update('enableBridgeForVisualBasic', true, target);
+		await config.update('languageClientServerCommand', companionServerLaunch.command, target);
+		await config.update('languageClientServerArgs', companionServerLaunch.args, target);
+		await context.globalState.update(ROSLYN_BRIDGE_BOOTSTRAP_KEY, true);
+
+		outputChannel.appendLine(`[Bridge] Applied companion VB bridge profile: ${companionServerLaunch.description}`);
+		void vscode.window.showInformationMessage('VSExtensionForVB automatically enabled VB bridge support.');
+		return;
+	}
+
+	const alreadyBootstrapped = context.globalState.get<boolean>(ROSLYN_BRIDGE_BOOTSTRAP_KEY, false);
+	if (alreadyBootstrapped) {
+		return;
+	}
+
+	if (existingServerCommand.length > 0) {
+		await context.globalState.update(ROSLYN_BRIDGE_BOOTSTRAP_KEY, true);
+		return;
+	}
+
+	const target = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0
+		? vscode.ConfigurationTarget.Workspace
+		: vscode.ConfigurationTarget.Global;
+
+	const detectedServerCommand = detectRoslynServerCommandPath();
+	if (!detectedServerCommand) {
+		outputChannel.appendLine('[Bridge] Automatic bootstrap skipped: no compatible bridge server detected.');
+		return;
+	}
+
+	await config.update('enableLanguageClientBridge', true, target);
+	await config.update('enableBridgeForCSharp', false, target);
+	await config.update('enableBridgeForVisualBasic', false, target);
+	await config.update('languageClientServerCommand', detectedServerCommand, target);
+	await config.update('languageClientServerArgs', ['--stdio'], target);
+	await context.globalState.update(ROSLYN_BRIDGE_BOOTSTRAP_KEY, true);
+
+	outputChannel.appendLine(`[Bridge] Automatically configured Roslyn bridge with: ${detectedServerCommand}`);
+	void vscode.window.showInformationMessage('VSExtensionForVB auto-configured bridge settings.');
+}
+
+function detectRoslynServerCommandPath(): string | undefined {
+	const csharpExtension = vscode.extensions.getExtension('ms-dotnettools.csharp');
+	if (!csharpExtension) {
+		return undefined;
+	}
+
+	const candidates = [
+		path.join(csharpExtension.extensionPath, '.roslyn', 'Microsoft.CodeAnalysis.LanguageServer.exe'),
+		path.join(csharpExtension.extensionPath, '.roslyn', 'Microsoft.CodeAnalysis.LanguageServer')
+	];
+
+	for (const candidate of candidates) {
+		if (fs.existsSync(candidate)) {
+			return candidate;
+		}
+	}
+
+	return undefined;
+}
+
+function shouldApplyCompanionBootstrap(
+	existingServerCommand: string,
+	existingServerArgs: string[],
+	existingServerCompatible: boolean,
+	bridgeEnabled: boolean,
+	bridgeForVisualBasic: boolean,
+	bridgeForCSharp: boolean,
+	companionServerLaunch: CompanionServerLaunch
+): boolean {
+	if (!existingServerCommand || !existingServerCompatible) {
+		return true;
+	}
+
+	if (existingServerCommand !== companionServerLaunch.command) {
+		return true;
+	}
+
+	if (!areArgsEqual(existingServerArgs, companionServerLaunch.args)) {
+		return true;
+	}
+
+	if (!bridgeEnabled || !bridgeForVisualBasic || bridgeForCSharp) {
+		return true;
+	}
+
+	return false;
+}
+
+function areArgsEqual(left: string[], right: string[]): boolean {
+	if (left.length !== right.length) {
+		return false;
+	}
+
+	for (let index = 0; index < left.length; index++) {
+		if (left[index] !== right[index]) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+function detectCompanionServerProjectPath(): string | undefined {
+	const workspaceFolderPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+	if (!workspaceFolderPath) {
+		return undefined;
+	}
+
+	const projectPath = path.join(workspaceFolderPath, 'server', 'VSExtensionForVB.LanguageServer', 'VSExtensionForVB.LanguageServer.csproj');
+	if (fs.existsSync(projectPath)) {
+		return projectPath;
+	}
+
+	return undefined;
+}
+
+type CompanionServerLaunch = {
+	command: string;
+	args: string[];
+	description: string;
+};
+
+function detectCompanionServerLaunch(context: vscode.ExtensionContext): CompanionServerLaunch | undefined {
+	const serverRelativePath = path.join('server', 'VSExtensionForVB.LanguageServer');
+	const serverDllName = 'VSExtensionForVB.LanguageServer.dll';
+	const candidateDllPaths = [
+		path.join(context.extensionPath, serverRelativePath, 'publish', serverDllName),
+		path.join(context.extensionPath, serverRelativePath, 'bin', 'Release', 'net8.0', serverDllName),
+		path.join(context.extensionPath, serverRelativePath, 'bin', 'Debug', 'net8.0', serverDllName)
+	];
+
+	for (const candidate of candidateDllPaths) {
+		if (fs.existsSync(candidate)) {
+			return {
+				command: 'dotnet',
+				args: [candidate, '--stdio'],
+				description: candidate
+			};
+		}
+	}
+
+	const projectPath = detectCompanionServerProjectPath();
+	if (projectPath) {
+		return {
+			command: 'dotnet',
+			args: ['run', '--project', projectPath, '--', '--stdio'],
+			description: projectPath
+		};
+	}
+
+	return undefined;
 }

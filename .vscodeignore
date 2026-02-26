@@ -12,3 +12,7 @@ vsc-extension-quickstart.md
 **/*.map
 **/*.ts
 **/.vscode-test.*
+server/VSExtensionForVB.LanguageServer/**
+!server/VSExtensionForVB.LanguageServer/publish
+!server/VSExtensionForVB.LanguageServer/publish/**
+test-workspace/**

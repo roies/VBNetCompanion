@@ -3,6 +3,11 @@
   "displayName": "VSExtensionForVB",
   "description": "Enhances .NET support with focus on VB.NET parity with C# for navigation, IntelliSense, and refactoring.",
   "version": "0.1.0-beta",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/roies/VSExtensionForVB.git"
+  },
   "engines": {
     "vscode": "^1.109.0"
   },
@@ -34,6 +39,10 @@
       {
         "command": "vsextensionforvb.applyRoslynBridgePreset",
         "title": "VSExtensionForVB: Apply Roslyn Bridge Preset"
+      },
+      {
+        "command": "vsextensionforvb.checkLanguageClientBridgeCompatibility",
+        "title": "VSExtensionForVB: Check Language Client Bridge Compatibility"
       }
     ],
     "configuration": {
@@ -81,6 +90,16 @@
           "default": false,
           "description": "Enable the optional .NET language-client bridge scaffold."
         },
+        "vsextensionforvb.enableBridgeForCSharp": {
+          "type": "boolean",
+          "default": false,
+          "description": "Route C# documents through the language-client bridge. Keep this off unless your configured server supports C#."
+        },
+        "vsextensionforvb.enableBridgeForVisualBasic": {
+          "type": "boolean",
+          "default": false,
+          "description": "Route VB.NET documents through the language-client bridge. Keep this off unless your configured server supports Visual Basic."
+        },
         "vsextensionforvb.languageClientServerCommand": {
           "type": "string",
           "default": "",
@@ -103,12 +122,18 @@
           ],
           "default": "off",
           "description": "Trace level for the optional language-client bridge."
+        },
+        "vsextensionforvb.autoBootstrapRoslynBridge": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically configure and enable the Roslyn bridge on first run when a compatible C# extension installation is detected."
         }
       }
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run package",
+    "vscode:prepublish": "npm run build:server && npm run package",
+    "build:server": "dotnet publish ./server/VSExtensionForVB.LanguageServer/VSExtensionForVB.LanguageServer.csproj -c Release -o ./server/VSExtensionForVB.LanguageServer/publish",
     "compile": "npm run check-types && npm run lint && node esbuild.js",
     "watch": "npm-run-all -p watch:*",
     "watch:esbuild": "node esbuild.js --watch",

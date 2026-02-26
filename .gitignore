@@ -3,3 +3,6 @@ dist
 node_modules
 .vscode-test/
 *.vsix
+server/VSExtensionForVB.LanguageServer/bin/
+server/VSExtensionForVB.LanguageServer/obj/
+server/VSExtensionForVB.LanguageServer/publish/

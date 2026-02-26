@@ -3,6 +3,12 @@ import type { LanguageClient } from 'vscode-languageclient/node.js';
 
 type LanguageClientModule = typeof import('vscode-languageclient/node.js');
 
+export type BridgeCompatibility = {
+	isCompatible: boolean;
+	message: string;
+	hint?: string;
+};
+
 export class DotnetLanguageClientBridge {
 	private client: LanguageClient | undefined;
 
@@ -22,8 +28,32 @@ export class DotnetLanguageClientBridge {
 			return;
 		}
 
+		const compatibility = assessBridgeServerCompatibility(command);
+		if (!compatibility.isCompatible) {
+			const target = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0
+				? vscode.ConfigurationTarget.Workspace
+				: vscode.ConfigurationTarget.Global;
+			await config.update('enableLanguageClientBridge', false, target);
+			this.outputChannel.appendLine(`[Bridge] Disabled bridge startup: ${compatibility.message}`);
+			void vscode.window.showWarningMessage(`VSExtensionForVB disabled the bridge: ${compatibility.message}`);
+			return;
+		}
+
 		const args = config.get<string[]>('languageClientServerArgs', []) ?? [];
+		const enableBridgeForCSharp = config.get<boolean>('enableBridgeForCSharp', false);
+		const enableBridgeForVisualBasic = config.get<boolean>('enableBridgeForVisualBasic', false);
 		const traceLevel = config.get<'off' | 'messages' | 'verbose'>('languageClientTraceLevel', 'off');
+		const documentSelector: string[] = [];
+		if (enableBridgeForCSharp) {
+			documentSelector.push('csharp');
+		}
+		if (enableBridgeForVisualBasic) {
+			documentSelector.push('vb');
+		}
+		if (documentSelector.length === 0) {
+			this.outputChannel.appendLine('[Bridge] Bridge is enabled, but no bridge document languages are selected.');
+			return;
+		}
 
 		const languageClientModule = await import('vscode-languageclient/node.js') as LanguageClientModule;
 		const { LanguageClient, Trace } = languageClientModule;
@@ -37,10 +67,7 @@ export class DotnetLanguageClientBridge {
 				transport: languageClientModule.TransportKind.stdio
 			},
 			{
-				documentSelector: [
-					{ language: 'csharp' },
-					{ language: 'vb' }
-				],
+				documentSelector,
 				outputChannel: this.outputChannel,
 				traceOutputChannel: this.outputChannel,
 				synchronize: {
@@ -81,4 +108,32 @@ export class DotnetLanguageClientBridge {
 				return traceEnum.Off;
 		}
 	}
+}
+
+export function assessBridgeServerCompatibility(commandPath: string): BridgeCompatibility {
+	if (!commandPath.trim()) {
+		return {
+			isCompatible: false,
+			message: 'No bridge server command is configured.',
+			hint: 'Set vsextensionforvb.languageClientServerCommand to a compatible standalone LSP server.'
+		};
+	}
+
+	if (isBundledCSharpRoslynPath(commandPath)) {
+		return {
+			isCompatible: false,
+			message: 'Bundled C# Roslyn server path is not supported as a standalone bridge endpoint on this setup.',
+			hint: 'Use a dedicated standalone server command and keep VB routing off unless server supports Visual Basic.'
+		};
+	}
+
+	return {
+		isCompatible: true,
+		message: 'Configured server path passed basic compatibility checks.'
+	};
+}
+
+function isBundledCSharpRoslynPath(commandPath: string): boolean {
+	const normalized = commandPath.replace(/\\/g, '/').toLowerCase();
+	return normalized.includes('/.vscode/extensions/ms-dotnettools.csharp-') && normalized.endsWith('/microsoft.codeanalysis.languageserver.exe');
 }

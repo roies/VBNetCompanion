@@ -31,6 +31,7 @@ Implemented today:
 - Live status bar indicator (`VB parity: OK` / `VB parity: N gaps`)
 - Configurable status refresh debounce (`vsextensionforvb.statusRefreshDelayMs`)
 - Optional language-client bridge scaffold for .NET LSP integration
+- Companion VB language server scaffold (`server/VSExtensionForVB.LanguageServer`)
 
 ## Current Support Boundary
 
@@ -50,6 +51,7 @@ In short:
 - `VSExtensionForVB: Restart .NET Language Services`
 - `VSExtensionForVB: Restart Language Client Bridge`
 - `VSExtensionForVB: Apply Roslyn Bridge Preset`
+- `VSExtensionForVB: Check Language Client Bridge Compatibility`
 
 When you run the parity status command, it now probes provider availability for:
 
@@ -83,15 +85,32 @@ The extension also shows a live status bar indicator:
 - `vsextensionforvb.promptToInstallMissingTooling`
 - `vsextensionforvb.statusRefreshDelayMs`
 - `vsextensionforvb.enableLanguageClientBridge`
+- `vsextensionforvb.enableBridgeForCSharp`
+- `vsextensionforvb.enableBridgeForVisualBasic`
 - `vsextensionforvb.languageClientServerCommand`
 - `vsextensionforvb.languageClientServerArgs`
 - `vsextensionforvb.languageClientTraceLevel`
+- `vsextensionforvb.autoBootstrapRoslynBridge`
 
 ## Language-Client Bridge Scaffold
 
-The bridge is intentionally opt-in and disabled by default.
+Automatic bootstrap is enabled by default. After install, the extension attempts to configure a working bridge automatically on first activation.
 
-To enable it:
+The extension now prefers its bundled companion VB server and configures:
+
+- `languageClientServerCommand = dotnet`
+- `languageClientServerArgs = [<bundled-server-dll>, --stdio]`
+- `enableLanguageClientBridge = true`
+- `enableBridgeForVisualBasic = true`
+- `enableBridgeForCSharp = false`
+
+This is designed to be install-and-go (no manual preset command required).
+
+If no bundled server is available in a dev scenario, bootstrap falls back to the companion server project (`dotnet run --project ... -- --stdio`) when present.
+
+If the configured server points to the bundled C# extension Roslyn executable and is detected as incompatible for standalone bridge usage, the extension auto-disables bridge startup to prevent LSP error loops.
+
+Manual override (optional):
 
 1. Set `vsextensionforvb.enableLanguageClientBridge` to `true`.
 2. Provide a server command in `vsextensionforvb.languageClientServerCommand`.
@@ -105,6 +124,12 @@ When configured, the extension starts a `vscode-languageclient` instance targeti
 - Seeds common bridge args (`--stdio` by default)
 - Enables the bridge and sets trace level to `messages`
 - Restarts the bridge from updated settings
+
+`VSExtensionForVB: Check Language Client Bridge Compatibility` validates the configured bridge server path and offers quick actions when the setup is incompatible.
+
+The companion server source lives in:
+
+- `server/VSExtensionForVB.LanguageServer`
 
 ## Development
 
@@ -123,6 +148,23 @@ Watch mode:
 Run tests:
 
 - `npm test`
+
+## Quick Manual Test Workspace
+
+Use `test-workspace` for a fast manual check of parity commands.
+
+Included files:
+
+- `test-workspace/Sample.cs`
+- `test-workspace/Sample.vb`
+
+Manual flow:
+
+1. Press `F5` to launch an Extension Development Host.
+2. In that new window, open the `test-workspace` folder.
+3. Run `VSExtensionForVB: Show .NET Language Parity Status`.
+4. Run `VSExtensionForVB: Remediate VB.NET Parity Gaps`.
+5. Inspect output channel `VSExtensionForVB` and status bar parity state.
 
 ## Troubleshooting
 
