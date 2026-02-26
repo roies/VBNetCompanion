@@ -10,11 +10,29 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [0.1.0-beta] - 2026-02-26
 
-- Scaffolded TypeScript VS Code extension with esbuild build pipeline.
-- Added .NET parity probe for C# and VB.NET feature checks (definition, completion, references, rename, code actions).
-- Added guided remediation flow for VB.NET parity gaps.
-- Added startup tooling checks and install prompts for missing .NET extensions.
-- Added live status bar parity indicator with configurable refresh debounce.
-- Added optional language-client bridge scaffold with restart and Roslyn preset commands.
-- Added command-line argument parser with quote/escape support for bridge preset arguments.
-- Added parser-focused unit tests and validated test suite pass.
+This beta delivers the first end-to-end parity-focused foundation for VB.NET alongside C# in VS Code.
+
+### Added
+
+- Project scaffold with TypeScript + esbuild build pipeline.
+- C# vs VB.NET parity probing for:
+	- Go to Definition (`F12`)
+	- IntelliSense/completions
+	- References
+	- Rename
+	- Code actions
+- Guided remediation command for detected VB.NET parity gaps.
+- Startup checks and prompts for missing .NET tooling.
+- Live status bar parity indicator with configurable debounce.
+- Optional language-client bridge scaffold with Roslyn preset support.
+- Command-line argument parsing with quoted/escaped argument support for bridge setup.
+- Unit tests for parser behavior.
+
+### Changed
+
+- Extension version updated to `0.1.0-beta`.
+
+### Notes
+
+- This beta adds parity diagnostics and bridge scaffolding; it does not replace the underlying .NET language server.
+- C# support remains provided by Microsoft .NET tooling while this extension focuses on narrowing VB.NET parity gaps.
