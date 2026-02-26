@@ -6,3 +6,5 @@ node_modules
 server/VSExtensionForVB.LanguageServer/bin/
 server/VSExtensionForVB.LanguageServer/obj/
 server/VSExtensionForVB.LanguageServer/publish/
+test-workspace/**/bin/
+test-workspace/**/obj/
