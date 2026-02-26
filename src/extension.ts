@@ -1,8 +1,12 @@
 import * as vscode from 'vscode';
 import { buildParityReport, getParityGaps, runDotnetParityProbe } from './parityProbe';
+import { DotnetLanguageClientBridge } from './languageClientBridge';
+
+let languageClientBridge: DotnetLanguageClientBridge | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
 	const outputChannel = vscode.window.createOutputChannel('VSExtensionForVB');
+	languageClientBridge = new DotnetLanguageClientBridge(outputChannel);
 	const parityStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
 	parityStatusBarItem.name = 'VSExtensionForVB Parity';
 	parityStatusBarItem.command = 'vsextensionforvb.remediateParityGaps';
@@ -15,6 +19,7 @@ export function activate(context: vscode.ExtensionContext) {
 	let refreshInFlight = false;
 	let refreshQueued = false;
 	void promptForMissingDotnetTooling();
+	void languageClientBridge.startFromConfiguration();
 	scheduleParityStatusRefresh(0);
 
 	const showParityStatusCommand = vscode.commands.registerCommand('vsextensionforvb.showParityStatus', async () => {
@@ -113,7 +118,67 @@ export function activate(context: vscode.ExtensionContext) {
 		void vscode.window.showWarningMessage('No known .NET language-service restart command is currently available.');
 	});
 
-	context.subscriptions.push(showParityStatusCommand, remediateParityGapsCommand, restartDotnetLanguageServicesCommand);
+	const restartLanguageClientBridgeCommand = vscode.commands.registerCommand('vsextensionforvb.restartLanguageClientBridge', async () => {
+		if (!languageClientBridge) {
+			void vscode.window.showWarningMessage('Language client bridge is not initialized.');
+			return;
+		}
+
+		await languageClientBridge.restartFromConfiguration();
+		void vscode.window.showInformationMessage('Language client bridge restarted from current settings.');
+	});
+
+	const applyRoslynBridgePresetCommand = vscode.commands.registerCommand('vsextensionforvb.applyRoslynBridgePreset', async () => {
+		const config = vscode.workspace.getConfiguration('vsextensionforvb');
+		const currentCommand = (config.get<string>('languageClientServerCommand', '') ?? '').trim();
+		const defaultRoslynPath = process.platform === 'win32'
+			? 'C:\\tools\\roslyn\\Microsoft.CodeAnalysis.LanguageServer.exe'
+			: '/usr/local/bin/roslyn-language-server';
+
+		const serverCommand = await vscode.window.showInputBox({
+			prompt: 'Path to local Roslyn language server executable',
+			value: currentCommand || defaultRoslynPath,
+			ignoreFocusOut: true,
+			validateInput: (value) => value.trim().length > 0 ? undefined : 'Server command path is required.'
+		});
+
+		if (!serverCommand) {
+			return;
+		}
+
+		const argsText = await vscode.window.showInputBox({
+			prompt: 'Optional Roslyn server arguments (space-separated)',
+			value: '--stdio',
+			ignoreFocusOut: true
+		});
+
+		if (argsText === undefined) {
+			return;
+		}
+
+		const parsedArgs = argsText
+			.split(' ')
+			.map((arg) => arg.trim())
+			.filter((arg) => arg.length > 0);
+
+		await config.update('enableLanguageClientBridge', true, vscode.ConfigurationTarget.Workspace);
+		await config.update('languageClientServerCommand', serverCommand.trim(), vscode.ConfigurationTarget.Workspace);
+		await config.update('languageClientServerArgs', parsedArgs, vscode.ConfigurationTarget.Workspace);
+		await config.update('languageClientTraceLevel', 'messages', vscode.ConfigurationTarget.Workspace);
+
+		await languageClientBridge?.restartFromConfiguration();
+
+		const action = await vscode.window.showInformationMessage(
+			'Applied Roslyn bridge preset to workspace settings and restarted the bridge.',
+			'Open Settings'
+		);
+
+		if (action === 'Open Settings') {
+			await vscode.commands.executeCommand('workbench.action.openSettings', 'vsextensionforvb.languageClient');
+		}
+	});
+
+	context.subscriptions.push(showParityStatusCommand, remediateParityGapsCommand, restartDotnetLanguageServicesCommand, restartLanguageClientBridgeCommand, applyRoslynBridgePresetCommand);
  	context.subscriptions.push({
 		dispose: () => {
 			if (refreshTimer) {
@@ -131,6 +196,14 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event) => {
 		if (event.affectsConfiguration('vsextensionforvb')) {
 			triggerStatusRefresh();
+			if (
+				event.affectsConfiguration('vsextensionforvb.enableLanguageClientBridge') ||
+				event.affectsConfiguration('vsextensionforvb.languageClientServerCommand') ||
+				event.affectsConfiguration('vsextensionforvb.languageClientServerArgs') ||
+				event.affectsConfiguration('vsextensionforvb.languageClientTraceLevel')
+			) {
+				void languageClientBridge?.restartFromConfiguration();
+			}
 		}
 	}));
 
@@ -240,7 +313,10 @@ export function activate(context: vscode.ExtensionContext) {
 	}
 }
 
-export function deactivate() {}
+export async function deactivate(): Promise<void> {
+	await languageClientBridge?.stop();
+	languageClientBridge = undefined;
+}
 
 async function openExtensionOrSearch(extensionId: string): Promise<void> {
 	try {
