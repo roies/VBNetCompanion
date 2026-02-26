@@ -147,7 +147,7 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 
 		const argsText = await vscode.window.showInputBox({
-			prompt: 'Optional Roslyn server arguments (space-separated)',
+			prompt: 'Optional Roslyn server arguments (supports quotes)',
 			value: '--stdio',
 			ignoreFocusOut: true
 		});
@@ -156,10 +156,7 @@ export function activate(context: vscode.ExtensionContext) {
 			return;
 		}
 
-		const parsedArgs = argsText
-			.split(' ')
-			.map((arg) => arg.trim())
-			.filter((arg) => arg.length > 0);
+		const parsedArgs = parseCommandLineArgs(argsText);
 
 		await config.update('enableLanguageClientBridge', true, vscode.ConfigurationTarget.Workspace);
 		await config.update('languageClientServerCommand', serverCommand.trim(), vscode.ConfigurationTarget.Workspace);
@@ -324,4 +321,68 @@ async function openExtensionOrSearch(extensionId: string): Promise<void> {
 	} catch {
 		await vscode.commands.executeCommand('workbench.extensions.search', `@id:${extensionId}`);
 	}
+}
+
+export function parseCommandLineArgs(input: string): string[] {
+	const args: string[] = [];
+	let current = '';
+	let quote: '"' | "'" | undefined;
+	let escaping = false;
+
+	for (let index = 0; index < input.length; index++) {
+		const character = input[index];
+		const nextCharacter = index + 1 < input.length ? input[index + 1] : undefined;
+
+		if (escaping) {
+			current += character;
+			escaping = false;
+			continue;
+		}
+
+		if (character === '\\') {
+			const canEscapeInQuote = !!quote && (nextCharacter === quote || nextCharacter === '\\');
+			const canEscapeOutsideQuote = !quote && !!nextCharacter && (/\s/.test(nextCharacter) || nextCharacter === '"' || nextCharacter === "'" || nextCharacter === '\\');
+
+			if (canEscapeInQuote || canEscapeOutsideQuote) {
+				escaping = true;
+			} else {
+				current += character;
+			}
+			continue;
+		}
+
+		if (quote) {
+			if (character === quote) {
+				quote = undefined;
+			} else {
+				current += character;
+			}
+			continue;
+		}
+
+		if (character === '"' || character === "'") {
+			quote = character;
+			continue;
+		}
+
+		if (/\s/.test(character)) {
+			if (current.length > 0) {
+				args.push(current);
+				current = '';
+			}
+			continue;
+		}
+
+		current += character;
+	}
+
+	if (escaping) {
+		current += '\\';
+	}
+
+	if (current.length > 0) {
+		args.push(current);
+	}
+
+	return args;
 }
