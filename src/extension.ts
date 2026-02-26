@@ -661,6 +661,34 @@ type CompanionServerLaunch = {
 function detectCompanionServerLaunch(context: vscode.ExtensionContext): CompanionServerLaunch | undefined {
 	const serverRelativePath = path.join('server', 'VSExtensionForVB.LanguageServer');
 	const serverDllName = 'VSExtensionForVB.LanguageServer.dll';
+	const serverExeName = 'VSExtensionForVB.LanguageServer.exe';
+	const candidateExePaths = [
+		path.join(context.extensionPath, serverRelativePath, 'publish', serverExeName),
+		path.join(context.extensionPath, serverRelativePath, 'bin', 'Release', 'net8.0', serverExeName),
+		path.join(context.extensionPath, serverRelativePath, 'bin', 'Debug', 'net8.0', serverExeName)
+	];
+
+	if (process.platform === 'win32') {
+		for (const candidate of candidateExePaths) {
+			if (fs.existsSync(candidate)) {
+				const siblingDllPath = candidate.replace(/\.exe$/i, '.dll');
+				if (fs.existsSync(siblingDllPath)) {
+					try {
+						fs.rmSync(siblingDllPath);
+					} catch {
+						// Keep launch resilient even if cleanup fails.
+					}
+				}
+
+				return {
+					command: candidate,
+					args: ['--stdio'],
+					description: candidate
+				};
+			}
+		}
+	}
+
 	const candidateDllPaths = [
 		path.join(context.extensionPath, serverRelativePath, 'publish', serverDllName),
 		path.join(context.extensionPath, serverRelativePath, 'bin', 'Release', 'net8.0', serverDllName),

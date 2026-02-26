@@ -1,0 +1,16 @@
+C:\workspace\VSExtensionForVB\test-workspace\VbConsumer\bin\Release\net10.0\VbConsumer.deps.json
+C:\workspace\VSExtensionForVB\test-workspace\VbConsumer\bin\Release\net10.0\VbConsumer.dll
+C:\workspace\VSExtensionForVB\test-workspace\VbConsumer\bin\Release\net10.0\VbConsumer.pdb
+C:\workspace\VSExtensionForVB\test-workspace\VbConsumer\bin\Release\net10.0\CSharpLib.dll
+C:\workspace\VSExtensionForVB\test-workspace\VbConsumer\bin\Release\net10.0\CSharpLib.pdb
+C:\workspace\VSExtensionForVB\test-workspace\VbConsumer\obj\Release\net10.0\VbConsumer.vbproj.AssemblyReference.cache
+C:\workspace\VSExtensionForVB\test-workspace\VbConsumer\obj\Release\net10.0\VbConsumer.GeneratedMSBuildEditorConfig.editorconfig
+C:\workspace\VSExtensionForVB\test-workspace\VbConsumer\obj\Release\net10.0\VbConsumer.AssemblyInfoInputs.cache
+C:\workspace\VSExtensionForVB\test-workspace\VbConsumer\obj\Release\net10.0\VbConsumer.AssemblyInfo.vb
+C:\workspace\VSExtensionForVB\test-workspace\VbConsumer\obj\Release\net10.0\VbConsumer.vbproj.CoreCompileInputs.cache
+C:\workspace\VSExtensionForVB\test-workspace\VbConsumer\obj\Release\net10.0\VbConsumer.sourcelink.json
+C:\workspace\VSExtensionForVB\test-workspace\VbConsumer\obj\Release\net10.0\VbConsumer.vbproj.Up2Date
+C:\workspace\VSExtensionForVB\test-workspace\VbConsumer\obj\Release\net10.0\VbConsumer.dll
+C:\workspace\VSExtensionForVB\test-workspace\VbConsumer\obj\Release\net10.0\refint\VbConsumer.dll
+C:\workspace\VSExtensionForVB\test-workspace\VbConsumer\obj\Release\net10.0\VbConsumer.pdb
+C:\workspace\VSExtensionForVB\test-workspace\VbConsumer\obj\Release\net10.0\ref\VbConsumer.dll

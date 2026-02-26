@@ -3,12 +3,21 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using Microsoft.Build.Locator;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.FindSymbols;
+using Microsoft.CodeAnalysis.MSBuild;
+using Microsoft.CodeAnalysis.Text;
 
 const string JsonRpcVersion = "2.0";
 
 var documents = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 var standardInput = Console.OpenStandardInput();
 var standardOutput = Console.OpenStandardOutput();
+var workspaceRootPath = string.Empty;
+var workspaceLoadGate = new SemaphoreSlim(1, 1);
+MSBuildWorkspace? roslynWorkspace = null;
+Solution? roslynSolution = null;
 
 while (true)
 {
@@ -37,6 +46,12 @@ while (true)
 
 	if (method == "initialize")
 	{
+		if (TryReadInitializeWorkspacePath(root, out var resolvedWorkspacePath))
+		{
+			workspaceRootPath = resolvedWorkspacePath;
+			await EnsureRoslynWorkspaceLoadedAsync(forceReload: true);
+		}
+
 		var response = new JsonObject
 		{
 			["jsonrpc"] = JsonRpcVersion,
@@ -97,6 +112,7 @@ while (true)
 		if (TryReadDidOpen(root, out var uri, out var text))
 		{
 			documents[uri] = text;
+			await UpdateRoslynDocumentTextAsync(uri, text);
 		}
 		continue;
 	}
@@ -106,6 +122,7 @@ while (true)
 		if (TryReadDidChange(root, out var uri, out var text))
 		{
 			documents[uri] = text;
+			await UpdateRoslynDocumentTextAsync(uri, text);
 		}
 		continue;
 	}
@@ -125,7 +142,7 @@ while (true)
 		{
 			["jsonrpc"] = JsonRpcVersion,
 			["id"] = idNode,
-			["result"] = HandleDefinition(root, documents)
+			["result"] = await HandleDefinitionAsync(root, documents)
 		};
 		await WriteMessageAsync(standardOutput, response);
 		continue;
@@ -149,7 +166,7 @@ while (true)
 		{
 			["jsonrpc"] = JsonRpcVersion,
 			["id"] = idNode,
-			["result"] = HandleReferences(root, documents)
+			["result"] = await HandleReferencesAsync(root, documents)
 		};
 		await WriteMessageAsync(standardOutput, response);
 		continue;
@@ -185,8 +202,14 @@ while (true)
 
 return;
 
-static JsonNode? HandleDefinition(JsonElement requestRoot, ConcurrentDictionary<string, string> documents)
+async Task<JsonNode?> HandleDefinitionAsync(JsonElement requestRoot, ConcurrentDictionary<string, string> documents)
 {
+	var semanticResult = await TryHandleDefinitionWithRoslynAsync(requestRoot);
+	if (semanticResult is not null)
+	{
+		return semanticResult;
+	}
+
 	if (!TryReadPosition(requestRoot, out var uri, out var line, out var character))
 	{
 		return null;
@@ -212,6 +235,12 @@ static JsonNode? HandleDefinition(JsonElement requestRoot, ConcurrentDictionary<
 	var definition = FindDefinition(lines, symbol);
 	if (definition is null)
 	{
+		var crossFileDefinition = await TryHandleDefinitionHeuristicAsync(uri, lines, line, character, symbol);
+		if (crossFileDefinition is not null)
+		{
+			return crossFileDefinition;
+		}
+
 		return null;
 	}
 
@@ -232,6 +261,165 @@ static JsonNode? HandleDefinition(JsonElement requestRoot, ConcurrentDictionary<
 			}
 		}
 	};
+}
+
+async Task<JsonNode?> TryHandleDefinitionHeuristicAsync(string sourceUri, IReadOnlyList<string> sourceLines, int line, int character, string symbol)
+{
+	if (string.IsNullOrWhiteSpace(workspaceRootPath) || line < 0 || line >= sourceLines.Count)
+	{
+		return null;
+	}
+
+	var lineText = sourceLines[line];
+	if (!TryGetWordRangeAt(lineText, character, out var symbolStart, out _))
+	{
+		return null;
+	}
+
+	var receiver = TryGetReceiverForMemberAccess(lineText, symbolStart);
+	var receiverType = !string.IsNullOrWhiteSpace(receiver)
+		? FindLocalTypeForReceiver(sourceLines, receiver)
+		: null;
+
+	var candidates = Directory
+		.EnumerateFiles(workspaceRootPath, "*.*", SearchOption.AllDirectories)
+		.Where(path => path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".vb", StringComparison.OrdinalIgnoreCase))
+		.Where(path => !path.Contains("\\bin\\", StringComparison.OrdinalIgnoreCase) && !path.Contains("\\obj\\", StringComparison.OrdinalIgnoreCase));
+
+	foreach (var candidatePath in candidates)
+	{
+		var candidateLines = await File.ReadAllLinesAsync(candidatePath);
+		if (candidateLines.Length == 0)
+		{
+			continue;
+		}
+
+		if (!string.IsNullOrWhiteSpace(receiverType))
+		{
+			var hasContainingType = candidateLines.Any(candidateLine => Regex.IsMatch(candidateLine, $@"\b(class|module)\s+{Regex.Escape(receiverType)}\b", RegexOptions.IgnoreCase));
+			if (!hasContainingType)
+			{
+				continue;
+			}
+		}
+
+		for (var lineIndex = 0; lineIndex < candidateLines.Length; lineIndex++)
+		{
+			if (!IsMethodDeclarationLine(candidateLines[lineIndex], symbol))
+			{
+				continue;
+			}
+
+			var column = candidateLines[lineIndex].IndexOf(symbol, StringComparison.OrdinalIgnoreCase);
+			if (column < 0)
+			{
+				continue;
+			}
+
+			return new JsonObject
+			{
+				["uri"] = new Uri(candidatePath).AbsoluteUri,
+				["range"] = CreateRange(lineIndex, column, lineIndex, column + symbol.Length)
+			};
+		}
+	}
+
+	return null;
+}
+
+static bool TryGetWordRangeAt(string line, int character, out int start, out int end)
+{
+	start = 0;
+	end = 0;
+	if (string.IsNullOrEmpty(line))
+	{
+		return false;
+	}
+
+	var safeCharacter = Math.Clamp(character, 0, line.Length);
+	start = safeCharacter;
+	while (start > 0 && IsWordChar(line[start - 1]))
+	{
+		start--;
+	}
+
+	end = safeCharacter;
+	while (end < line.Length && IsWordChar(line[end]))
+	{
+		end++;
+	}
+
+	return end > start;
+}
+
+static string? TryGetReceiverForMemberAccess(string line, int memberStart)
+{
+	var index = memberStart - 1;
+	while (index >= 0 && char.IsWhiteSpace(line[index]))
+	{
+		index--;
+	}
+
+	if (index < 0 || line[index] != '.')
+	{
+		return null;
+	}
+
+	index--;
+	while (index >= 0 && char.IsWhiteSpace(line[index]))
+	{
+		index--;
+	}
+
+	if (index < 0 || !IsWordChar(line[index]))
+	{
+		return null;
+	}
+
+	var end = index + 1;
+	while (index >= 0 && IsWordChar(line[index]))
+	{
+		index--;
+	}
+
+	var start = index + 1;
+	return line[start..end];
+}
+
+static string? FindLocalTypeForReceiver(IReadOnlyList<string> lines, string receiver)
+{
+	foreach (var line in lines)
+	{
+		var explicitNewPattern = new Regex($@"\b{Regex.Escape(receiver)}\b\s+As\s+New\s+([A-Za-z_][A-Za-z0-9_]*)", RegexOptions.IgnoreCase);
+		var explicitTypePattern = new Regex($@"\b{Regex.Escape(receiver)}\b\s+As\s+([A-Za-z_][A-Za-z0-9_]*)", RegexOptions.IgnoreCase);
+
+		var explicitNewMatch = explicitNewPattern.Match(line);
+		if (explicitNewMatch.Success)
+		{
+			return explicitNewMatch.Groups[1].Value;
+		}
+
+		var explicitTypeMatch = explicitTypePattern.Match(line);
+		if (explicitTypeMatch.Success)
+		{
+			return explicitTypeMatch.Groups[1].Value;
+		}
+	}
+
+	return null;
+}
+
+static bool IsMethodDeclarationLine(string line, string methodName)
+{
+	if (string.IsNullOrWhiteSpace(line) || string.IsNullOrWhiteSpace(methodName))
+	{
+		return false;
+	}
+
+	var csharpPattern = $@"\b{Regex.Escape(methodName)}\s*\(";
+	var vbPattern = $@"\b(Function|Sub)\s+{Regex.Escape(methodName)}\b";
+
+	return Regex.IsMatch(line, csharpPattern, RegexOptions.IgnoreCase) || Regex.IsMatch(line, vbPattern, RegexOptions.IgnoreCase);
 }
 
 static JsonNode HandleCompletion(JsonElement requestRoot, ConcurrentDictionary<string, string> documents)
@@ -271,8 +459,14 @@ static JsonNode HandleCompletion(JsonElement requestRoot, ConcurrentDictionary<s
 	};
 }
 
-static JsonNode HandleReferences(JsonElement requestRoot, ConcurrentDictionary<string, string> documents)
+async Task<JsonNode> HandleReferencesAsync(JsonElement requestRoot, ConcurrentDictionary<string, string> documents)
 {
+	var semanticResult = await TryHandleReferencesWithRoslynAsync(requestRoot);
+	if (semanticResult is not null)
+	{
+		return semanticResult;
+	}
+
 	if (!TryReadPosition(requestRoot, out var uri, out var line, out var character))
 	{
 		return new JsonArray();
@@ -686,6 +880,390 @@ static (string Uri, string Symbol, bool IsLocalScope, int ScopeStartLine, int Sc
 	}
 
 	return (uri, symbol, false, 0, int.MaxValue, null);
+}
+
+async Task<JsonNode?> TryHandleDefinitionWithRoslynAsync(JsonElement requestRoot)
+{
+	var context = await TryResolveRoslynContextAsync(requestRoot);
+	if (context is null)
+	{
+		return null;
+	}
+
+	var symbol = await ResolveSymbolAtPositionAsync(context.Value.Document, context.Value.Position);
+	if (symbol is null)
+	{
+		return null;
+	}
+
+	var sourceLocation = symbol
+		.Locations
+		.Where(location => location.IsInSource && location.SourceTree is not null)
+		.FirstOrDefault();
+
+	if (sourceLocation is null)
+	{
+		return null;
+	}
+
+	return CreateLocationNode(sourceLocation);
+}
+
+async Task<JsonNode?> TryHandleReferencesWithRoslynAsync(JsonElement requestRoot)
+{
+	var context = await TryResolveRoslynContextAsync(requestRoot);
+	if (context is null)
+	{
+		return null;
+	}
+
+	var symbol = await ResolveSymbolAtPositionAsync(context.Value.Document, context.Value.Position);
+	if (symbol is null)
+	{
+		return null;
+	}
+
+	var includeDeclaration = TryReadIncludeDeclaration(requestRoot, out var include) ? include : true;
+	var locations = new JsonArray();
+	var references = await SymbolFinder.FindReferencesAsync(symbol, context.Value.Solution);
+
+	foreach (var referencedSymbol in references)
+	{
+		foreach (var referenceLocation in referencedSymbol.Locations)
+		{
+			if (!includeDeclaration && referenceLocation.IsImplicit)
+			{
+				continue;
+			}
+
+			locations.Add(CreateLocationNode(referenceLocation.Location));
+		}
+
+		if (includeDeclaration)
+		{
+			foreach (var declarationLocation in referencedSymbol.Definition.Locations.Where(location => location.IsInSource))
+			{
+				locations.Add(CreateLocationNode(declarationLocation));
+			}
+		}
+	}
+
+	return locations;
+}
+
+async Task<ISymbol?> ResolveSymbolAtPositionAsync(Document document, int position)
+{
+	var syntaxRoot = await document.GetSyntaxRootAsync();
+	if (syntaxRoot is null)
+	{
+		return null;
+	}
+
+	var safePosition = Math.Clamp(position, 0, Math.Max(0, syntaxRoot.FullSpan.End - 1));
+	var token = syntaxRoot.FindToken(safePosition, findInsideTrivia: true);
+	if (!token.Span.Contains(safePosition) && safePosition > 0)
+	{
+		token = syntaxRoot.FindToken(safePosition - 1, findInsideTrivia: true);
+	}
+
+	var semanticModel = await document.GetSemanticModelAsync();
+	if (semanticModel is null)
+	{
+		return null;
+	}
+
+	var workspace = roslynWorkspace ?? document.Project.Solution.Workspace;
+	var symbol = await SymbolFinder.FindSymbolAtPositionAsync(semanticModel, safePosition, workspace);
+	if (symbol is not null)
+	{
+		return symbol;
+	}
+
+	var currentNode = token.Parent;
+	while (currentNode is not null)
+	{
+		symbol = semanticModel.GetSymbolInfo(currentNode).Symbol ?? semanticModel.GetDeclaredSymbol(currentNode);
+		if (symbol is not null)
+		{
+			return symbol;
+		}
+
+		var candidates = semanticModel.GetSymbolInfo(currentNode).CandidateSymbols;
+		symbol = candidates.FirstOrDefault();
+		if (symbol is not null)
+		{
+			return symbol;
+		}
+
+		currentNode = currentNode.Parent;
+	}
+
+	return null;
+}
+
+async Task<(Document Document, int Position, Solution Solution)?> TryResolveRoslynContextAsync(JsonElement requestRoot)
+{
+	if (!TryReadPosition(requestRoot, out var uri, out var line, out var character))
+	{
+		return null;
+	}
+
+	await EnsureRoslynWorkspaceLoadedAsync(forceReload: false);
+	if (roslynSolution is null)
+	{
+		return null;
+	}
+
+	if (!TryGetFilePathFromUri(uri, out var filePath))
+	{
+		return null;
+	}
+
+	var documentId = roslynSolution.GetDocumentIdsWithFilePath(filePath).FirstOrDefault();
+	if (documentId is null)
+	{
+		return null;
+	}
+
+	var document = roslynSolution.GetDocument(documentId);
+	if (document is null)
+	{
+		return null;
+	}
+
+	var text = await document.GetTextAsync();
+	if (line < 0 || line >= text.Lines.Count)
+	{
+		return null;
+	}
+
+	var safeCharacter = Math.Clamp(character, 0, text.Lines[line].Span.Length);
+	var position = text.Lines.GetPosition(new LinePosition(line, safeCharacter));
+	return (document, position, roslynSolution);
+}
+
+async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
+{
+	if (string.IsNullOrWhiteSpace(workspaceRootPath))
+	{
+		return;
+	}
+
+	if (!forceReload && roslynSolution is not null)
+	{
+		return;
+	}
+
+	await workspaceLoadGate.WaitAsync();
+	try
+	{
+		if (!forceReload && roslynSolution is not null)
+		{
+			return;
+		}
+
+		if (!MSBuildLocator.IsRegistered)
+		{
+			MSBuildLocator.RegisterDefaults();
+		}
+
+		var workspace = MSBuildWorkspace.Create();
+		workspace.WorkspaceFailed += (_, _) => { };
+
+		var solutionPath = Directory
+			.GetFiles(workspaceRootPath, "*.sln", SearchOption.TopDirectoryOnly)
+			.Concat(Directory.GetFiles(workspaceRootPath, "*.slnx", SearchOption.TopDirectoryOnly))
+			.FirstOrDefault();
+		if (!string.IsNullOrWhiteSpace(solutionPath))
+		{
+			try
+			{
+				roslynSolution = await workspace.OpenSolutionAsync(solutionPath);
+				roslynWorkspace = workspace;
+				return;
+			}
+			catch
+			{
+				// Fall back to project loading for environments where .slnx is unsupported.
+			}
+		}
+
+		var projectPaths = Directory
+			.GetFiles(workspaceRootPath, "*.csproj", SearchOption.AllDirectories)
+			.Concat(Directory.GetFiles(workspaceRootPath, "*.vbproj", SearchOption.AllDirectories))
+			.ToList();
+
+		if (projectPaths.Count == 0)
+		{
+			return;
+		}
+
+		foreach (var projectPath in projectPaths)
+		{
+			var project = await workspace.OpenProjectAsync(projectPath);
+			roslynSolution = project.Solution;
+		}
+
+		roslynWorkspace = workspace;
+	}
+	catch
+	{
+		roslynWorkspace = null;
+		roslynSolution = null;
+	}
+	finally
+	{
+		workspaceLoadGate.Release();
+	}
+}
+
+async Task UpdateRoslynDocumentTextAsync(string uri, string text)
+{
+	if (roslynSolution is null)
+	{
+		return;
+	}
+
+	if (!TryGetFilePathFromUri(uri, out var filePath))
+	{
+		return;
+	}
+
+	await workspaceLoadGate.WaitAsync();
+	try
+	{
+		if (roslynSolution is null)
+		{
+			return;
+		}
+
+		var documentIds = roslynSolution.GetDocumentIdsWithFilePath(filePath);
+		if (documentIds.Length == 0)
+		{
+			return;
+		}
+
+		var nextSolution = roslynSolution;
+		var updatedText = SourceText.From(text, Encoding.UTF8);
+		foreach (var documentId in documentIds)
+		{
+			nextSolution = nextSolution.WithDocumentText(documentId, updatedText, PreservationMode.PreserveIdentity);
+		}
+
+		roslynSolution = nextSolution;
+		roslynWorkspace?.TryApplyChanges(nextSolution);
+	}
+	finally
+	{
+		workspaceLoadGate.Release();
+	}
+}
+
+bool TryReadInitializeWorkspacePath(JsonElement requestRoot, out string path)
+{
+	path = string.Empty;
+	if (!requestRoot.TryGetProperty("params", out var paramsElement))
+	{
+		return false;
+	}
+
+	if (paramsElement.TryGetProperty("rootUri", out var rootUriElement))
+	{
+		var rootUri = rootUriElement.GetString();
+		if (!string.IsNullOrWhiteSpace(rootUri) && TryGetFilePathFromUri(rootUri, out var rootPathFromUri))
+		{
+			path = rootPathFromUri;
+			return true;
+		}
+	}
+
+	if (paramsElement.TryGetProperty("workspaceFolders", out var foldersElement) && foldersElement.ValueKind == JsonValueKind.Array)
+	{
+		foreach (var folder in foldersElement.EnumerateArray())
+		{
+			if (!folder.TryGetProperty("uri", out var uriElement))
+			{
+				continue;
+			}
+
+			var folderUri = uriElement.GetString();
+			if (!string.IsNullOrWhiteSpace(folderUri) && TryGetFilePathFromUri(folderUri, out var rootPathFromFolder))
+			{
+				path = rootPathFromFolder;
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
+bool TryGetFilePathFromUri(string uri, out string filePath)
+{
+	filePath = string.Empty;
+	if (string.IsNullOrWhiteSpace(uri))
+	{
+		return false;
+	}
+
+	var candidate = uri.Trim();
+
+	if (candidate.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
+	{
+		if (!Uri.TryCreate(candidate, UriKind.Absolute, out var parsedUri) || !parsedUri.IsFile)
+		{
+			return false;
+		}
+
+		candidate = Uri.UnescapeDataString(parsedUri.LocalPath);
+	}
+
+	var hasLeadingSlashDrivePattern =
+		candidate.Length >= 4 &&
+		candidate[0] == '/' &&
+		char.IsLetter(candidate[1]) &&
+		candidate[2] == ':' &&
+		(candidate[3] == '/' || candidate[3] == '\\');
+
+	if (hasLeadingSlashDrivePattern)
+	{
+		candidate = candidate[1..];
+	}
+
+	if (!Path.IsPathRooted(candidate))
+	{
+		return false;
+	}
+
+	try
+	{
+		filePath = Path.GetFullPath(candidate);
+		return !string.IsNullOrWhiteSpace(filePath);
+	}
+	catch
+	{
+		filePath = string.Empty;
+		return false;
+	}
+}
+
+JsonObject CreateLocationNode(Location location)
+{
+	if (location.SourceTree is null || string.IsNullOrWhiteSpace(location.SourceTree.FilePath))
+	{
+		return new JsonObject();
+	}
+
+	var lineSpan = location.GetLineSpan();
+	var start = lineSpan.StartLinePosition;
+	var end = lineSpan.EndLinePosition;
+	var uri = new Uri(location.SourceTree.FilePath).AbsoluteUri;
+
+	return new JsonObject
+	{
+		["uri"] = uri,
+		["range"] = CreateRange(start.Line, start.Character, end.Line, end.Character)
+	};
 }
 
 static JsonObject CreateLocation(string uri, int startLine, int startCharacter, int endCharacter)

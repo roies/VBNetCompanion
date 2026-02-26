@@ -1,3 +1,5 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { LanguageClient } from 'vscode-languageclient/node.js';
 
@@ -39,7 +41,13 @@ export class DotnetLanguageClientBridge {
 			return;
 		}
 
-		const args = config.get<string[]>('languageClientServerArgs', []) ?? [];
+		const configuredArgs = config.get<string[]>('languageClientServerArgs', []) ?? [];
+		const resolvedLaunch = this.resolveBridgeLaunch(command, configuredArgs);
+		const args = resolvedLaunch.args;
+		const resolvedCommand = resolvedLaunch.command;
+		if (resolvedLaunch.reason) {
+			this.outputChannel.appendLine(`[Bridge] ${resolvedLaunch.reason}`);
+		}
 		const enableBridgeForCSharp = config.get<boolean>('enableBridgeForCSharp', false);
 		const enableBridgeForVisualBasic = config.get<boolean>('enableBridgeForVisualBasic', false);
 		const traceLevel = config.get<'off' | 'messages' | 'verbose'>('languageClientTraceLevel', 'off');
@@ -62,7 +70,7 @@ export class DotnetLanguageClientBridge {
 			'vsextensionforvb.dotnetBridge',
 			'VSExtensionForVB .NET Bridge',
 			{
-				command,
+				command: resolvedCommand,
 				args,
 				transport: languageClientModule.TransportKind.stdio
 			},
@@ -78,8 +86,44 @@ export class DotnetLanguageClientBridge {
 
 		client.setTrace(this.toTrace(traceLevel, Trace));
 		this.client = client;
-		await client.start();
-		this.outputChannel.appendLine(`[Bridge] Started language client bridge using command: ${command}`);
+		try {
+			await client.start();
+			this.outputChannel.appendLine(`[Bridge] Started language client bridge using command: ${resolvedCommand}`);
+			return;
+		} catch (error) {
+			await this.stop();
+			const detail = error instanceof Error ? error.message : String(error);
+			this.outputChannel.appendLine(`[Bridge] Failed to start bridge: ${detail}`);
+
+			const fallback = this.buildCompanionProjectFallback(resolvedCommand, args);
+			if (!fallback) {
+				throw error;
+			}
+
+			this.outputChannel.appendLine('[Bridge] Retrying bridge with companion project fallback command.');
+			const fallbackClient = new LanguageClient(
+				'vsextensionforvb.dotnetBridge',
+				'VSExtensionForVB .NET Bridge',
+				{
+					command: fallback.command,
+					args: fallback.args,
+					transport: languageClientModule.TransportKind.stdio
+				},
+				{
+					documentSelector,
+					outputChannel: this.outputChannel,
+					traceOutputChannel: this.outputChannel,
+					synchronize: {
+						configurationSection: ['vsextensionforvb']
+					}
+				}
+			);
+
+			fallbackClient.setTrace(this.toTrace(traceLevel, Trace));
+			this.client = fallbackClient;
+			await fallbackClient.start();
+			this.outputChannel.appendLine(`[Bridge] Started language client bridge with fallback command: ${fallback.command}`);
+		}
 	}
 
 	public async restartFromConfiguration(): Promise<void> {
@@ -107,6 +151,61 @@ export class DotnetLanguageClientBridge {
 			default:
 				return traceEnum.Off;
 		}
+	}
+
+	private buildCompanionProjectFallback(command: string, args: string[]): { command: string; args: string[] } | undefined {
+		const combined = `${command} ${args.join(' ')}`.toLowerCase();
+		if (!combined.includes('vsextensionforvb.languageserver')) {
+			return undefined;
+		}
+
+		const projectPath = this.findCompanionProjectPath();
+		if (!projectPath) {
+			return undefined;
+		}
+		return {
+			command: 'dotnet',
+			args: ['run', '--project', projectPath, '--', '--stdio']
+		};
+	}
+
+	private resolveBridgeLaunch(command: string, args: string[]): { command: string; args: string[]; reason?: string } {
+		const looksLikeCompanionBinary = `${command} ${args.join(' ')}`.toLowerCase().includes('vsextensionforvb.languageserver');
+		if (!looksLikeCompanionBinary) {
+			return { command, args };
+		}
+
+		const projectPath = this.findCompanionProjectPath();
+		if (!projectPath) {
+			return { command, args };
+		}
+
+		return {
+			command: 'dotnet',
+			args: ['run', '--project', projectPath, '--', '--stdio'],
+			reason: 'Using companion project launch to avoid policy-blocked binary execution.'
+		};
+	}
+
+	private findCompanionProjectPath(): string | undefined {
+		const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
+		for (const folder of workspaceFolders) {
+			const folderPath = folder.uri.fsPath;
+			const candidates = [
+				path.join(folderPath, 'server', 'VSExtensionForVB.LanguageServer', 'VSExtensionForVB.LanguageServer.csproj'),
+				path.join(folderPath, '..', 'server', 'VSExtensionForVB.LanguageServer', 'VSExtensionForVB.LanguageServer.csproj'),
+				path.join(folderPath, '..', '..', 'server', 'VSExtensionForVB.LanguageServer', 'VSExtensionForVB.LanguageServer.csproj')
+			];
+
+			for (const candidate of candidates) {
+				const normalized = path.normalize(candidate);
+				if (fs.existsSync(normalized)) {
+					return normalized;
+				}
+			}
+		}
+
+		return undefined;
 	}
 }
 

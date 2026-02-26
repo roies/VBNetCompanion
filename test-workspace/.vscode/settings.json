@@ -1,8 +1,7 @@
 {
     "vsextensionforvb.enableLanguageClientBridge": true,
-    "vsextensionforvb.languageClientServerCommand": "dotnet",
+    "vsextensionforvb.languageClientServerCommand": "c:\\workspace\\VSExtensionForVB\\server\\VSExtensionForVB.LanguageServer\\publish\\VSExtensionForVB.LanguageServer.exe",
     "vsextensionforvb.languageClientServerArgs": [
-        "c:\\workspace\\VSExtensionForVB\\server\\VSExtensionForVB.LanguageServer\\publish\\VSExtensionForVB.LanguageServer.dll",
         "--stdio"
     ],
     "vsextensionforvb.enableBridgeForCSharp": false,

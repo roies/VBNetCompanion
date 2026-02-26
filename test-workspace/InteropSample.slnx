@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="CSharpLib/CSharpLib.csproj" />
+  <Project Path="VbConsumer/VbConsumer.vbproj" />
+</Solution>
