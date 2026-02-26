@@ -212,7 +212,20 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	});
 
-	context.subscriptions.push(showParityStatusCommand, remediateParityGapsCommand, restartDotnetLanguageServicesCommand, restartLanguageClientBridgeCommand, applyRoslynBridgePresetCommand, checkLanguageClientBridgeCompatibilityCommand);
+	const showReferencesFromBridgeCommand = vscode.commands.registerCommand('vsextensionforvb.showReferencesFromBridge', async (rawUri: unknown, rawPosition: unknown, rawLocations: unknown) => {
+		const uri = parseProtocolUri(rawUri);
+		const position = parseProtocolPosition(rawPosition);
+		const locations = parseProtocolLocations(rawLocations);
+
+		if (!uri || !position) {
+			void vscode.window.showWarningMessage('Unable to open references: invalid reference payload from language server.');
+			return;
+		}
+
+		await vscode.commands.executeCommand('editor.action.showReferences', uri, position, locations);
+	});
+
+	context.subscriptions.push(showParityStatusCommand, remediateParityGapsCommand, restartDotnetLanguageServicesCommand, restartLanguageClientBridgeCommand, applyRoslynBridgePresetCommand, checkLanguageClientBridgeCompatibilityCommand, showReferencesFromBridgeCommand);
  	context.subscriptions.push({
 		dispose: () => {
 			if (refreshTimer) {
@@ -556,6 +569,73 @@ function areArgsEqual(left: string[], right: string[]): boolean {
 	}
 
 	return true;
+}
+
+function parseProtocolUri(value: unknown): vscode.Uri | undefined {
+	if (value instanceof vscode.Uri) {
+		return value;
+	}
+
+	if (typeof value === 'string' && value.trim().length > 0) {
+		try {
+			return vscode.Uri.parse(value);
+		} catch {
+			return undefined;
+		}
+	}
+
+	return undefined;
+}
+
+function parseProtocolPosition(value: unknown): vscode.Position | undefined {
+	if (!value || typeof value !== 'object') {
+		return undefined;
+	}
+
+	const lineValue = Reflect.get(value, 'line');
+	const characterValue = Reflect.get(value, 'character');
+	if (typeof lineValue !== 'number' || typeof characterValue !== 'number') {
+		return undefined;
+	}
+
+	return new vscode.Position(lineValue, characterValue);
+}
+
+function parseProtocolRange(value: unknown): vscode.Range | undefined {
+	if (!value || typeof value !== 'object') {
+		return undefined;
+	}
+
+	const start = parseProtocolPosition(Reflect.get(value, 'start'));
+	const end = parseProtocolPosition(Reflect.get(value, 'end'));
+	if (!start || !end) {
+		return undefined;
+	}
+
+	return new vscode.Range(start, end);
+}
+
+function parseProtocolLocations(value: unknown): vscode.Location[] {
+	if (!Array.isArray(value)) {
+		return [];
+	}
+
+	const locations: vscode.Location[] = [];
+	for (const item of value) {
+		if (!item || typeof item !== 'object') {
+			continue;
+		}
+
+		const uri = parseProtocolUri(Reflect.get(item, 'uri'));
+		const range = parseProtocolRange(Reflect.get(item, 'range'));
+		if (!uri || !range) {
+			continue;
+		}
+
+		locations.push(new vscode.Location(uri, range));
+	}
+
+	return locations;
 }
 
 function detectCompanionServerProjectPath(): string | undefined {

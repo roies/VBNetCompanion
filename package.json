@@ -43,6 +43,10 @@
       {
         "command": "vsextensionforvb.checkLanguageClientBridgeCompatibility",
         "title": "VSExtensionForVB: Check Language Client Bridge Compatibility"
+      },
+      {
+        "command": "vsextensionforvb.showReferencesFromBridge",
+        "title": "VSExtensionForVB: Show References From Bridge"
       }
     ],
     "configuration": {
