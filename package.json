@@ -2,7 +2,7 @@
   "name": "vsextensionforvb",
   "displayName": "VSExtensionForVB",
   "description": "Enhances .NET support with focus on VB.NET parity with C# for navigation, IntelliSense, and refactoring.",
-  "version": "0.0.1",
+  "version": "0.1.0-beta",
   "engines": {
     "vscode": "^1.109.0"
   },
