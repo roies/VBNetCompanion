@@ -1215,8 +1215,17 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 		await LogAsync($"Loading {projectPaths.Count} project(s): {string.Join(", ", projectPaths.Select(Path.GetFileName))}");
 		foreach (var projectPath in projectPaths)
 		{
-			var project = await workspace.OpenProjectAsync(projectPath);
-			roslynSolution = project.Solution;
+			try
+			{
+				await LogAsync($"Opening project: {projectPath}");
+				var project = await workspace.OpenProjectAsync(projectPath);
+				roslynSolution = project.Solution;
+				await LogAsync($"Opened project: {Path.GetFileName(projectPath)} ({project.Documents.Count()} docs)");
+			}
+			catch (Exception ex)
+			{
+				await LogAsync($"OpenProjectAsync failed for {Path.GetFileName(projectPath)}: {ex}", 1);
+			}
 		}
 
 		roslynWorkspace = workspace;
@@ -1227,7 +1236,7 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 	{
 		roslynWorkspace = null;
 		roslynSolution = null;
-		await LogAsync($"Roslyn workspace load failed: {ex.Message}", 1);
+		await LogAsync($"Roslyn workspace load failed: {ex}", 1);
 	}
 	finally
 	{
