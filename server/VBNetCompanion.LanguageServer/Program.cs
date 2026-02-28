@@ -1132,7 +1132,17 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 
 		if (!MSBuildLocator.IsRegistered)
 		{
-			MSBuildLocator.RegisterDefaults();
+			var msbuildPath = TryFindMSBuildPath();
+			if (msbuildPath is not null)
+			{
+				await LogAsync($"Registering MSBuild from: {msbuildPath}");
+				MSBuildLocator.RegisterMSBuildPath(msbuildPath);
+			}
+			else
+			{
+				await LogAsync("Falling back to MSBuildLocator.RegisterDefaults()");
+				MSBuildLocator.RegisterDefaults();
+			}
 		}
 
 		var workspace = MSBuildWorkspace.Create();
@@ -1587,6 +1597,60 @@ static async Task<string?> ReadHeaderLineAsync(Stream input)
 	}
 
 	return Encoding.UTF8.GetString(bytes.ToArray());
+}
+
+static string? TryFindMSBuildPath()
+{
+	// Try to find the latest .NET SDK by running `dotnet --list-sdks`.
+	// Format: "10.0.102 [C:\Program Files\dotnet\sdk]"
+	try
+	{
+		var process = new System.Diagnostics.Process
+		{
+			StartInfo = new System.Diagnostics.ProcessStartInfo
+			{
+				FileName = "dotnet",
+				Arguments = "--list-sdks",
+				RedirectStandardOutput = true,
+				UseShellExecute = false,
+				CreateNoWindow = true
+			}
+		};
+		process.Start();
+		var output = process.StandardOutput.ReadToEnd();
+		process.WaitForExit(5000);
+
+		var bestPath = (string?)null;
+		var bestVersion = (Version?)null;
+
+		foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+		{
+			var trimmed = line.Trim();
+			// Format: "10.0.102 [C:\Program Files\dotnet\sdk]"
+			var bracketStart = trimmed.IndexOf('[');
+			var bracketEnd = trimmed.IndexOf(']');
+			if (bracketStart < 0 || bracketEnd <= bracketStart) continue;
+
+			var versionStr = trimmed[..bracketStart].Trim();
+			var sdkBase = trimmed[(bracketStart + 1)..bracketEnd].Trim();
+			var sdkPath = Path.Combine(sdkBase, versionStr);
+
+			if (!Directory.Exists(sdkPath)) continue;
+			if (!Version.TryParse(versionStr.Split('-')[0], out var version)) continue;
+
+			if (bestVersion is null || version > bestVersion)
+			{
+				bestVersion = version;
+				bestPath = sdkPath;
+			}
+		}
+
+		return bestPath;
+	}
+	catch
+	{
+		return null;
+	}
 }
 
 static async Task WriteMessageAsync(Stream output, JsonObject message)
