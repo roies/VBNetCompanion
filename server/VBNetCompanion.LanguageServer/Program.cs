@@ -19,6 +19,21 @@ var workspaceLoadGate = new SemaphoreSlim(1, 1);
 MSBuildWorkspace? roslynWorkspace = null;
 Solution? roslynSolution = null;
 
+async Task LogAsync(string message, int type = 4 /* 1=error,2=warn,3=info,4=log */)
+{
+	var notification = new JsonObject
+	{
+		["jsonrpc"] = JsonRpcVersion,
+		["method"] = "window/logMessage",
+		["params"] = new JsonObject
+		{
+			["type"] = type,
+			["message"] = $"[VBNetCompanion.LanguageServer] {message}"
+		}
+	};
+	await WriteMessageAsync(standardOutput, notification);
+}
+
 while (true)
 {
 	var incoming = await ReadMessageAsync(standardInput);
@@ -564,6 +579,11 @@ async Task<JsonNode> HandleCodeLensAsync(JsonElement requestRoot, ConcurrentDict
 	{
 		var docId = roslynSolution.GetDocumentIdsWithFilePath(codeLensFilePath).FirstOrDefault();
 		roslynDoc = docId is not null ? roslynSolution.GetDocument(docId) : null;
+		await LogAsync($"CodeLens: solution={roslynSolution.Projects.Count()}p, file={codeLensFilePath}, roslynDoc={roslynDoc?.Name ?? "null"}");
+	}
+	else
+	{
+		await LogAsync($"CodeLens: roslynSolution={(roslynSolution is null ? "null" : "loaded")}, uri={uri}", 2);
 	}
 
 	if (!documents.TryGetValue(uri, out var sourceText))
@@ -610,7 +630,12 @@ async Task<JsonNode> HandleCodeLensAsync(JsonElement requestRoot, ConcurrentDict
 								referenceLocations.Add(CreateLocationNode(refLocation.Location));
 							}
 						}
+						await LogAsync($"CodeLens Roslyn: '{declaration.Symbol}' → {referenceCount} ref(s) via {symbol.Kind}");
 						resolvedViaRoslyn = true;
+					}
+					else
+					{
+						await LogAsync($"CodeLens Roslyn: '{declaration.Symbol}' at L{declaration.Line}:{safeChar} → symbol not resolved", 2);
 					}
 				}
 			}
@@ -1111,7 +1136,8 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 		}
 
 		var workspace = MSBuildWorkspace.Create();
-		workspace.WorkspaceFailed += (_, _) => { };
+		var workspaceFailures = new ConcurrentBag<string>();
+		workspace.WorkspaceFailed += (_, e) => workspaceFailures.Add($"[{e.Diagnostic.Kind}] {e.Diagnostic.Message}");
 
 		var solutionPath = Directory
 			.GetFiles(workspaceRootPath, "*.sln", SearchOption.TopDirectoryOnly)
@@ -1123,10 +1149,13 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 			{
 				roslynSolution = await workspace.OpenSolutionAsync(solutionPath);
 				roslynWorkspace = workspace;
+				foreach (var f in workspaceFailures) await LogAsync($"WorkspaceDiag: {f}", 2);
+				await LogAsync($"Roslyn solution loaded: {solutionPath} ({roslynSolution.Projects.Count()} projects)");
 				return;
 			}
-			catch
+			catch (Exception ex)
 			{
+				await LogAsync($"Solution load failed ({solutionPath}): {ex.Message} — falling back to project load", 2);
 				// Fall back to project loading for environments where .slnx is unsupported.
 			}
 		}
@@ -1148,11 +1177,14 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 		}
 
 		roslynWorkspace = workspace;
+		foreach (var f in workspaceFailures) await LogAsync($"WorkspaceDiag: {f}", 2);
+		await LogAsync($"Roslyn projects loaded: {roslynSolution?.Projects.Count() ?? 0} project(s) via individual project scan");
 	}
-	catch
+	catch (Exception ex)
 	{
 		roslynWorkspace = null;
 		roslynSolution = null;
+		await LogAsync($"Roslyn workspace load failed: {ex.Message}", 1);
 	}
 	finally
 	{
