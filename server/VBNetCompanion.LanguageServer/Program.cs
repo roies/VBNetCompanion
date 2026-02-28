@@ -594,6 +594,77 @@ async Task<JsonNode> HandleCodeLensAsync(JsonElement requestRoot, ConcurrentDict
 		sourceText = roslynText.ToString();
 	}
 
+	// Roslyn-first path: enumerate declared symbols directly via the semantic model.
+	// This handles both C# and VB without language-specific regex.
+	if (roslynDoc is not null && roslynSolution is not null)
+	{
+		try
+		{
+			var syntaxRoot = await roslynDoc.GetSyntaxRootAsync();
+			var semanticModel = await roslynDoc.GetSemanticModelAsync();
+			var docText = await roslynDoc.GetTextAsync();
+			var roslynLenses = new JsonArray();
+			var seen = new HashSet<ISymbol>(SymbolEqualityComparer.Default);
+
+			foreach (var node in syntaxRoot!.DescendantNodes())
+			{
+				var symbol = semanticModel!.GetDeclaredSymbol(node);
+				if (symbol is null || symbol.IsImplicitlyDeclared) continue;
+				if (symbol is not INamedTypeSymbol
+					and not IPropertySymbol
+					and not IMethodSymbol { MethodKind: MethodKind.Ordinary or MethodKind.Constructor })
+					continue;
+				if (!seen.Add(symbol)) continue;
+
+				var symbolLoc = symbol.Locations.FirstOrDefault(l => l.IsInSource);
+				if (symbolLoc is null) continue;
+
+				var spanStart = docText.Lines.GetLinePosition(symbolLoc.SourceSpan.Start);
+				var spanEnd = docText.Lines.GetLinePosition(symbolLoc.SourceSpan.End);
+
+				var refs = await SymbolFinder.FindReferencesAsync(symbol, roslynSolution);
+				var refCount = 0;
+				var refLocations = new JsonArray();
+				foreach (var refSym in refs)
+				{
+					foreach (var refLoc in refSym.Locations)
+					{
+						refCount++;
+						refLocations.Add(CreateLocationNode(refLoc.Location));
+					}
+				}
+
+				await LogAsync($"CodeLens Roslyn: '{symbol.Name}' → {refCount} ref(s) via {symbol.Kind}");
+				var title = refCount == 1 ? "1 reference" : $"{refCount} references";
+				roslynLenses.Add(new JsonObject
+				{
+					["range"] = CreateRange(spanStart.Line, spanStart.Character, spanEnd.Line, spanEnd.Character),
+					["command"] = new JsonObject
+					{
+						["title"] = title,
+						["command"] = "vbnetcompanion.showReferencesFromBridge",
+						["arguments"] = new JsonArray
+						{
+							uri,
+							new JsonObject
+							{
+								["line"] = spanStart.Line,
+								["character"] = spanStart.Character
+							},
+							refLocations
+						}
+					}
+				});
+			}
+			return roslynLenses;
+		}
+		catch (Exception ex)
+		{
+			await LogAsync($"CodeLens Roslyn enum failed: {ex.Message}", 2);
+		}
+	}
+
+	// Fallback: text-based VB keyword regex (used when Roslyn workspace is unavailable).
 	var lines = SplitLines(sourceText);
 	var declarations = FindDeclarations(lines);
 	var lenses = new JsonArray();
@@ -607,73 +678,29 @@ async Task<JsonNode> HandleCodeLensAsync(JsonElement requestRoot, ConcurrentDict
 
 		var referenceLocations = new JsonArray();
 		var referenceCount = 0;
-		var resolvedViaRoslyn = false;
 
-		// Prefer Roslyn: resolves cross-project references (VB → C# and vice versa).
-		if (roslynDoc is not null && roslynSolution is not null)
+		foreach (var document in documents)
 		{
-			try
+			var documentLines = SplitLines(document.Value);
+			for (var lineIndex = 0; lineIndex < documentLines.Count; lineIndex++)
 			{
-				var docText = await roslynDoc.GetTextAsync();
-				if (declaration.Line < docText.Lines.Count)
+				foreach (var occurrence in FindSymbolOccurrences(documentLines[lineIndex], declaration.Symbol))
 				{
-					var safeChar = Math.Clamp(declaration.StartCharacter, 0, docText.Lines[declaration.Line].Span.Length);
-					var position = docText.Lines.GetPosition(new LinePosition(declaration.Line, safeChar));
-					var symbol = await ResolveSymbolAtPositionAsync(roslynDoc, position);
-					if (symbol is not null)
+					if (IsMemberAccessOccurrence(documentLines[lineIndex], occurrence.StartCharacter))
 					{
-						var refs = await SymbolFinder.FindReferencesAsync(symbol, roslynSolution);
-						foreach (var referencedSymbol in refs)
-						{
-							foreach (var refLocation in referencedSymbol.Locations)
-							{
-								referenceCount++;
-								referenceLocations.Add(CreateLocationNode(refLocation.Location));
-							}
-						}
-						await LogAsync($"CodeLens Roslyn: '{declaration.Symbol}' → {referenceCount} ref(s) via {symbol.Kind}");
-						resolvedViaRoslyn = true;
+						continue;
 					}
-					else
-					{
-						await LogAsync($"CodeLens Roslyn: '{declaration.Symbol}' at L{declaration.Line}:{safeChar} → symbol not resolved", 2);
-					}
-				}
-			}
-			catch
-			{
-				// Fall through to text-search.
-				referenceLocations = new JsonArray();
-				referenceCount = 0;
-			}
-		}
 
-		// Fallback: text-search across open documents.
-		if (!resolvedViaRoslyn)
-		{
-			foreach (var document in documents)
-			{
-				var documentLines = SplitLines(document.Value);
-				for (var lineIndex = 0; lineIndex < documentLines.Count; lineIndex++)
-				{
-					foreach (var occurrence in FindSymbolOccurrences(documentLines[lineIndex], declaration.Symbol))
-					{
-						if (IsMemberAccessOccurrence(documentLines[lineIndex], occurrence.StartCharacter))
-						{
-							continue;
-						}
+					var isDeclaration =
+						string.Equals(document.Key, uri, StringComparison.OrdinalIgnoreCase)
+						&& lineIndex == declaration.Line
+						&& occurrence.StartCharacter == declaration.StartCharacter
+						&& occurrence.EndCharacter == declaration.EndCharacter;
 
-						var isDeclaration =
-							string.Equals(document.Key, uri, StringComparison.OrdinalIgnoreCase)
-							&& lineIndex == declaration.Line
-							&& occurrence.StartCharacter == declaration.StartCharacter
-							&& occurrence.EndCharacter == declaration.EndCharacter;
+					if (isDeclaration) continue;
 
-						if (isDeclaration) continue;
-
-						referenceCount++;
-						referenceLocations.Add(CreateLocation(document.Key, lineIndex, occurrence.StartCharacter, occurrence.EndCharacter));
-					}
+					referenceCount++;
+					referenceLocations.Add(CreateLocation(document.Key, lineIndex, occurrence.StartCharacter, occurrence.EndCharacter));
 				}
 			}
 		}
