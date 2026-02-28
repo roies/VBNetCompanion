@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Microsoft.Build.Locator;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.Classification;
 using Microsoft.CodeAnalysis.FindSymbols;
 using Microsoft.CodeAnalysis.MSBuild;
 using Microsoft.CodeAnalysis.Recommendations;
@@ -88,6 +89,20 @@ while (true)
 					{
 						["resolveProvider"] = false,
 						["triggerCharacters"] = new JsonArray(".", " ")
+					},
+					["semanticTokensProvider"] = new JsonObject
+					{
+						["full"] = true,
+						["range"] = false,
+						["legend"] = new JsonObject
+						{
+							["tokenTypes"] = new JsonArray(
+								"namespace", "class", "enum", "interface", "struct",
+								"typeParameter", "type", "parameter", "variable",
+								"property", "enumMember", "event", "method"
+							),
+							["tokenModifiers"] = new JsonArray("static", "readonly", "declaration")
+						}
 					}
 				},
 				["serverInfo"] = new JsonObject
@@ -196,6 +211,18 @@ while (true)
 			["jsonrpc"] = JsonRpcVersion,
 			["id"] = idNode,
 			["result"] = await HandleCodeLensAsync(root, documents)
+		};
+		await WriteMessageAsync(standardOutput, response);
+		continue;
+	}
+
+	if (method == "textDocument/semanticTokens/full")
+	{
+		var response = new JsonObject
+		{
+			["jsonrpc"] = JsonRpcVersion,
+			["id"] = idNode,
+			["result"] = await HandleSemanticTokensAsync(root, documents)
 		};
 		await WriteMessageAsync(standardOutput, response);
 		continue;
@@ -465,6 +492,114 @@ static bool IsMethodDeclarationLine(string line, string methodName)
 	return Regex.IsMatch(line, csharpMethodPattern, RegexOptions.IgnoreCase)
 		|| Regex.IsMatch(line, typeDeclarationPattern, RegexOptions.IgnoreCase)
 		|| Regex.IsMatch(line, vbPattern, RegexOptions.IgnoreCase);
+}
+
+// Legend indices must match the tokenTypes array declared in the initialize capabilities.
+static int? ClassificationToTokenType(string classification) => classification switch
+{
+	ClassificationTypeNames.NamespaceName       => 0,
+	ClassificationTypeNames.ClassName           => 1,
+	ClassificationTypeNames.RecordClassName     => 1,
+	ClassificationTypeNames.ModuleName          => 1,  // VB Module ≈ static class
+	ClassificationTypeNames.EnumName            => 2,
+	ClassificationTypeNames.InterfaceName       => 3,
+	ClassificationTypeNames.StructName          => 4,
+	ClassificationTypeNames.RecordStructName    => 4,
+	ClassificationTypeNames.TypeParameterName   => 5,
+	ClassificationTypeNames.DelegateName        => 6,
+	ClassificationTypeNames.ParameterName       => 7,
+	ClassificationTypeNames.LocalName           => 8,
+	ClassificationTypeNames.FieldName           => 8,
+	ClassificationTypeNames.ConstantName        => 8,
+	ClassificationTypeNames.PropertyName        => 9,
+	ClassificationTypeNames.EnumMemberName      => 10,
+	ClassificationTypeNames.EventName           => 11,
+	ClassificationTypeNames.MethodName          => 12,
+	ClassificationTypeNames.ExtensionMethodName => 12,
+	_ => (int?)null
+};
+
+async Task<JsonNode> HandleSemanticTokensAsync(JsonElement requestRoot, ConcurrentDictionary<string, string> documents)
+{
+	var empty = new JsonObject { ["data"] = new JsonArray() };
+
+	await EnsureRoslynWorkspaceLoadedAsync(forceReload: false);
+	if (roslynSolution is null || !TryReadUri(requestRoot, out var uri) || !TryGetFilePathFromUri(uri, out var filePath))
+		return empty;
+
+	var docId = roslynSolution.GetDocumentIdsWithFilePath(filePath).FirstOrDefault();
+	var roslynDoc = docId is not null ? roslynSolution.GetDocument(docId) : null;
+	if (roslynDoc is null) return empty;
+
+	// Apply live edits from the in-memory buffer.
+	if (documents.TryGetValue(uri, out var liveText))
+		roslynDoc = roslynDoc.WithText(SourceText.From(liveText, Encoding.UTF8));
+
+	try
+	{
+		var sourceText = await roslynDoc.GetTextAsync();
+		var spans = await Classifier.GetClassifiedSpansAsync(roslynDoc, new Microsoft.CodeAnalysis.Text.TextSpan(0, sourceText.Length));
+
+		// Group by text span — Roslyn can emit multiple classifications for the same span
+		// (e.g. MethodName + StaticSymbol). Merge into a single entry with modifiers.
+		var bySpan = new Dictionary<Microsoft.CodeAnalysis.Text.TextSpan, (int tokenType, int modifiers)>();
+
+		foreach (var span in spans.OrderBy(s => s.TextSpan.Start))
+		{
+			if (span.ClassificationType == ClassificationTypeNames.StaticSymbol)
+			{
+				if (bySpan.TryGetValue(span.TextSpan, out var existing))
+					bySpan[span.TextSpan] = (existing.tokenType, existing.modifiers | 1); // set static modifier
+				continue;
+			}
+
+			var tokenType = ClassificationToTokenType(span.ClassificationType);
+			if (tokenType is null) continue;
+
+			var modifiers = 0;
+			if (span.ClassificationType == ClassificationTypeNames.ConstantName)
+				modifiers |= 2; // readonly modifier
+
+			if (bySpan.TryGetValue(span.TextSpan, out var prev))
+				bySpan[span.TextSpan] = (tokenType.Value, prev.modifiers | modifiers);
+			else
+				bySpan[span.TextSpan] = (tokenType.Value, modifiers);
+		}
+
+		// Encode as LSP delta-encoded token data.
+		var data = new JsonArray();
+		var prevLine = 0;
+		var prevChar = 0;
+
+		foreach (var (textSpan, (tokenType, modifiers)) in bySpan.OrderBy(kv => kv.Key.Start))
+		{
+			var linePos = sourceText.Lines.GetLinePosition(textSpan.Start);
+			var line = linePos.Line;
+			var startChar = linePos.Character;
+			var length = textSpan.Length;
+			if (length == 0) continue;
+
+			var deltaLine = line - prevLine;
+			var deltaStart = deltaLine == 0 ? startChar - prevChar : startChar;
+
+			data.Add(deltaLine);
+			data.Add(deltaStart);
+			data.Add(length);
+			data.Add(tokenType);
+			data.Add(modifiers);
+
+			prevLine = line;
+			prevChar = startChar;
+		}
+
+		await LogAsync($"SemanticTokens: {data.Count / 5} tokens for {Path.GetFileName(filePath)}");
+		return new JsonObject { ["data"] = data };
+	}
+	catch (Exception ex)
+	{
+		await LogAsync($"SemanticTokens failed: {ex.Message}", 2);
+		return empty;
+	}
 }
 
 async Task<JsonNode> HandleCompletionAsync(JsonElement requestRoot, ConcurrentDictionary<string, string> documents)

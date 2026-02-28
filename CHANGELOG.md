@@ -8,6 +8,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.8] - 2026-02-28
+
+### Added
+
+- **Semantic token colorization for VB.NET**: types, methods, properties, enums, interfaces, namespaces, and other symbols in `.vb` files are now colored using the same VS Code theme colors as C#. Uses Roslyn's `Classifier.GetClassifiedSpansAsync` to produce accurate per-token type information including static and readonly modifiers.
+
 ## [0.1.7] - 2026-02-28
 
 ### Fixed
