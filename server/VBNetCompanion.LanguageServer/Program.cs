@@ -178,7 +178,7 @@ while (true)
 		{
 			["jsonrpc"] = JsonRpcVersion,
 			["id"] = idNode,
-			["result"] = HandleCodeLens(root, documents)
+			["result"] = await HandleCodeLensAsync(root, documents)
 		};
 		await WriteMessageAsync(standardOutput, response);
 		continue;
@@ -550,11 +550,27 @@ async Task<JsonNode> HandleReferencesAsync(JsonElement requestRoot, ConcurrentDi
 	return locations;
 }
 
-static JsonNode HandleCodeLens(JsonElement requestRoot, ConcurrentDictionary<string, string> documents)
+async Task<JsonNode> HandleCodeLensAsync(JsonElement requestRoot, ConcurrentDictionary<string, string> documents)
 {
-	if (!TryReadUri(requestRoot, out var uri) || !documents.TryGetValue(uri, out var sourceText))
+	if (!TryReadUri(requestRoot, out var uri))
 	{
 		return new JsonArray();
+	}
+
+	// Try to resolve the Roslyn document for cross-project reference counting.
+	await EnsureRoslynWorkspaceLoadedAsync(forceReload: false);
+	Document? roslynDoc = null;
+	if (roslynSolution is not null && TryGetFilePathFromUri(uri, out var codeLensFilePath))
+	{
+		var docId = roslynSolution.GetDocumentIdsWithFilePath(codeLensFilePath).FirstOrDefault();
+		roslynDoc = docId is not null ? roslynSolution.GetDocument(docId) : null;
+	}
+
+	if (!documents.TryGetValue(uri, out var sourceText))
+	{
+		if (roslynDoc is null) return new JsonArray();
+		var roslynText = await roslynDoc.GetTextAsync();
+		sourceText = roslynText.ToString();
 	}
 
 	var lines = SplitLines(sourceText);
@@ -570,41 +586,68 @@ static JsonNode HandleCodeLens(JsonElement requestRoot, ConcurrentDictionary<str
 
 		var referenceLocations = new JsonArray();
 		var referenceCount = 0;
+		var resolvedViaRoslyn = false;
 
-		foreach (var document in documents)
+		// Prefer Roslyn: resolves cross-project references (VB → C# and vice versa).
+		if (roslynDoc is not null && roslynSolution is not null)
 		{
-			var documentLines = SplitLines(document.Value);
-			for (var lineIndex = 0; lineIndex < documentLines.Count; lineIndex++)
+			try
 			{
-				if (string.Equals(declaration.Kind, "Dim", StringComparison.OrdinalIgnoreCase))
+				var docText = await roslynDoc.GetTextAsync();
+				if (declaration.Line < docText.Lines.Count)
 				{
-					var sameDocument = string.Equals(document.Key, uri, StringComparison.OrdinalIgnoreCase);
-					if (!sameDocument || lineIndex < declaration.ScopeStartLine || lineIndex > declaration.ScopeEndLine)
+					var safeChar = Math.Clamp(declaration.StartCharacter, 0, docText.Lines[declaration.Line].Span.Length);
+					var position = docText.Lines.GetPosition(new LinePosition(declaration.Line, safeChar));
+					var symbol = await ResolveSymbolAtPositionAsync(roslynDoc, position);
+					if (symbol is not null)
 					{
-						continue;
+						var refs = await SymbolFinder.FindReferencesAsync(symbol, roslynSolution);
+						foreach (var referencedSymbol in refs)
+						{
+							foreach (var refLocation in referencedSymbol.Locations)
+							{
+								referenceCount++;
+								referenceLocations.Add(CreateLocationNode(refLocation.Location));
+							}
+						}
+						resolvedViaRoslyn = true;
 					}
 				}
+			}
+			catch
+			{
+				// Fall through to text-search.
+				referenceLocations = new JsonArray();
+				referenceCount = 0;
+			}
+		}
 
-				foreach (var occurrence in FindSymbolOccurrences(documentLines[lineIndex], declaration.Symbol))
+		// Fallback: text-search across open documents.
+		if (!resolvedViaRoslyn)
+		{
+			foreach (var document in documents)
+			{
+				var documentLines = SplitLines(document.Value);
+				for (var lineIndex = 0; lineIndex < documentLines.Count; lineIndex++)
 				{
-					if (string.Equals(declaration.Kind, "Dim", StringComparison.OrdinalIgnoreCase) && IsMemberAccessOccurrence(documentLines[lineIndex], occurrence.StartCharacter))
+					foreach (var occurrence in FindSymbolOccurrences(documentLines[lineIndex], declaration.Symbol))
 					{
-						continue;
+						if (IsMemberAccessOccurrence(documentLines[lineIndex], occurrence.StartCharacter))
+						{
+							continue;
+						}
+
+						var isDeclaration =
+							string.Equals(document.Key, uri, StringComparison.OrdinalIgnoreCase)
+							&& lineIndex == declaration.Line
+							&& occurrence.StartCharacter == declaration.StartCharacter
+							&& occurrence.EndCharacter == declaration.EndCharacter;
+
+						if (isDeclaration) continue;
+
+						referenceCount++;
+						referenceLocations.Add(CreateLocation(document.Key, lineIndex, occurrence.StartCharacter, occurrence.EndCharacter));
 					}
-
-					var isDeclaration =
-						string.Equals(document.Key, uri, StringComparison.OrdinalIgnoreCase)
-						&& lineIndex == declaration.Line
-						&& occurrence.StartCharacter == declaration.StartCharacter
-						&& occurrence.EndCharacter == declaration.EndCharacter;
-
-					if (isDeclaration)
-					{
-						continue;
-					}
-
-					referenceCount++;
-					referenceLocations.Add(CreateLocation(document.Key, lineIndex, occurrence.StartCharacter, occurrence.EndCharacter));
 				}
 			}
 		}
