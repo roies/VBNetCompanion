@@ -140,7 +140,7 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run build:server && npm run package",
-    "build:server": "dotnet publish ./server/VBNetCompanion.LanguageServer/VBNetCompanion.LanguageServer.csproj -c Release -r win-x64 --self-contained false /p:PublishSingleFile=true /p:PublishTrimmed=false -o ./server/VBNetCompanion.LanguageServer/publish && node -e \"const fs=require('node:fs'); try { fs.rmSync('./server/VBNetCompanion.LanguageServer/publish/VBNetCompanion.LanguageServer.dll'); } catch {}\"",
+    "build:server": "dotnet publish ./server/VBNetCompanion.LanguageServer/VBNetCompanion.LanguageServer.csproj -c Release -r win-x64 --self-contained false -o ./server/VBNetCompanion.LanguageServer/publish",
     "compile": "npm run check-types && npm run lint && node esbuild.js",
     "watch": "npm-run-all -p watch:*",
     "watch:esbuild": "node esbuild.js --watch",

@@ -10,6 +10,21 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [0.1.0] - 2026-02-28
 
+### Added
+
+- **Cross-project CodeLens reference counting** via bundled Roslyn language server (`VBNetCompanion.LanguageServer`).
+  - Loads `.sln` and `.slnx` solution files to resolve references across VB.NET and C# projects.
+  - Uses `SymbolFinder.FindReferencesAsync` against the full Roslyn solution for accurate counts.
+  - Falls back to single-file text search (scoped to current file only) when no project context is available.
+- Roslyn workspace loads `.slnx` (XML format) by parsing it directly with `XDocument`, since `OpenSolutionAsync` only supports `.sln` text format.
+- MSBuild auto-registration via `dotnet --list-sdks` when `MSBuildLocator.RegisterDefaults()` is unavailable (required for deployed executables).
+
+### Fixed
+
+- `Assembly.Location` returning empty string inside single-file bundles caused `BuildHostProcessManager.GetNetCoreBuildHostPath()` to crash. Fixed by publishing as a standard directory deployment (DLLs as loose files) instead of a single-file bundle.
+- Text-fallback CodeLens was scanning all open documents, producing false cross-file matches for same-named symbols (e.g. `GetMessage` appearing in unrelated C# and VB files). Scoped to current file only.
+- C# methods were not found by the VB-only keyword regex in `FindDeclarations`. Fixed by using the Roslyn semantic model (`GetDeclaredSymbol`) for symbol enumeration when project context is available.
+
 ### Changed
 
 - Extension renamed from `VSExtensionForVB` to `VB.NET Companion`.

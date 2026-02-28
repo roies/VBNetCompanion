@@ -1,48 +1,49 @@
 # VB.NET Companion
 
-VB.NET Companion is a TypeScript-based VS Code extension scaffold focused on improving .NET editing parity for VB.NET with C#.
+VB.NET Companion narrows the editor experience gap between C# and VB.NET in VS Code. It adds parity diagnostics, guided remediation, and a bundled Roslyn-powered language server that brings **cross-project reference counting (CodeLens)** and **Go to Definition** from VB.NET into C# projects and vice versa.
 
-## Objective
+## Features
 
-Deliver a Visual Studio-like experience in VS Code for both C# and VB.NET, with priority on:
+### Cross-Project Reference Counting (CodeLens)
 
-- F12 navigation (Go to Definition/Implementation)
-- IntelliSense and semantic completion quality
-- Refactoring support (rename, extract, code actions)
+The bundled Roslyn language server loads your solution or projects and shows accurate reference counts directly in the editor — including cross-project references between VB.NET and C# code.
 
-## Current Scaffold Status
+- C# method defined in `CSharpLib` called from `VbConsumer.vb` → shows **1 reference**
+- VB class referencing C# types → correctly counted
+- Works for classes, methods, properties, and constructors
 
-This initial scaffold includes:
+### Parity Probe
 
-- TypeScript extension project with esbuild bundling
-- Extension manifest (`package.json`) with commands and configuration
-- Activation entrypoint in `src/extension.ts`
-- Initial parity-status command and language-service restart helper command
-- Core feature probe module (`src/parityProbe.ts`) for C#/VB.NET parity checks
+Probes language feature availability in parallel for both C# and VB.NET:
 
-## Current Status (Feb 2026)
+- Go to Definition (`F12`)
+- IntelliSense / completions
+- References
+- Rename refactoring
+- Code actions
 
-Implemented today:
+Results surface in the output channel and status bar indicator (`VB parity: OK` / `VB parity: N gaps`).
 
-- Project scaffold with TypeScript + esbuild
-- Parity probe for C# vs VB.NET language feature availability
-- Guided remediation command for VB.NET parity gaps
-- Startup tooling checks and install prompts for required .NET extensions
-- Live status bar indicator (`VB parity: OK` / `VB parity: N gaps`)
-- Configurable status refresh debounce (`vbnetcompanion.statusRefreshDelayMs`)
-- Optional language-client bridge scaffold for .NET LSP integration
-- Companion VB language server scaffold (`server/VBNetCompanion.LanguageServer`)
+### Guided Remediation
+
+When parity gaps are detected, the remediation command provides targeted actions:
+
+- Open recommended .NET tooling extension on the Marketplace
+- Restart language services
+- Re-run probe
+- Open extension settings
+
+### Status Bar Indicator
+
+Live status bar item shows current parity health at a glance. Click to open the full remediation flow.
+
+### Auto-Bootstrap Roslyn Bridge
+
+On first activation, the extension automatically configures a working Roslyn bridge using the bundled companion server — no manual setup required.
 
 ## Current Support Boundary
 
-This extension currently adds VB.NET parity measurement and diagnostics (feature probing and gap reporting).
-
-It does not replace the underlying .NET language server. Actual editor intelligence (Go to Definition, IntelliSense, refactorings) is still provided by installed .NET tooling (for example C# Dev Kit / C# extension stack).
-
-In short:
-
-- C# language intelligence already exists in VS Code via Microsoft tooling.
-- This project adds parity-focused support for VB.NET by detecting and surfacing where VB behavior does or does not match C#.
+This extension adds parity diagnostics and cross-project references via its bundled Roslyn server. It does not replace the underlying .NET language server for C# — that is still provided by C# Dev Kit / C# extension. VB.NET intelligence is delivered through this extension's bridge.
 
 ## Commands
 
