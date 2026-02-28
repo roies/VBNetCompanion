@@ -8,6 +8,7 @@ using Microsoft.Build.Locator;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.FindSymbols;
 using Microsoft.CodeAnalysis.MSBuild;
+using Microsoft.CodeAnalysis.Recommendations;
 using Microsoft.CodeAnalysis.Text;
 
 const string JsonRpcVersion = "2.0";
@@ -86,7 +87,7 @@ while (true)
 					["completionProvider"] = new JsonObject
 					{
 						["resolveProvider"] = false,
-						["triggerCharacters"] = new JsonArray(".")
+						["triggerCharacters"] = new JsonArray(".", " ")
 					}
 				},
 				["serverInfo"] = new JsonObject
@@ -170,7 +171,7 @@ while (true)
 		{
 			["jsonrpc"] = JsonRpcVersion,
 			["id"] = idNode,
-			["result"] = HandleCompletion(root, documents)
+			["result"] = await HandleCompletionAsync(root, documents)
 		};
 		await WriteMessageAsync(standardOutput, response);
 		continue;
@@ -466,7 +467,102 @@ static bool IsMethodDeclarationLine(string line, string methodName)
 		|| Regex.IsMatch(line, vbPattern, RegexOptions.IgnoreCase);
 }
 
-static JsonNode HandleCompletion(JsonElement requestRoot, ConcurrentDictionary<string, string> documents)
+async Task<JsonNode> HandleCompletionAsync(JsonElement requestRoot, ConcurrentDictionary<string, string> documents)
+{
+	await EnsureRoslynWorkspaceLoadedAsync(forceReload: false);
+
+	if (roslynSolution is not null
+		&& TryReadPosition(requestRoot, out var uri, out var line, out var character)
+		&& TryGetFilePathFromUri(uri, out var filePath))
+	{
+		var docId = roslynSolution.GetDocumentIdsWithFilePath(filePath).FirstOrDefault();
+		var roslynDoc = docId is not null ? roslynSolution.GetDocument(docId) : null;
+
+		if (roslynDoc is not null)
+		{
+			// Apply any in-memory unsaved edits so completion reflects current typing.
+			if (documents.TryGetValue(uri, out var liveText))
+			{
+				roslynDoc = roslynDoc.WithText(SourceText.From(liveText, Encoding.UTF8));
+			}
+
+			try
+			{
+				var sourceText = await roslynDoc.GetTextAsync();
+				if (line >= 0 && line < sourceText.Lines.Count)
+				{
+					var safeChar = Math.Clamp(character, 0, sourceText.Lines[line].Span.Length);
+					var position = sourceText.Lines.GetPosition(new LinePosition(line, safeChar));
+					var lineText = sourceText.Lines[line].ToString();
+					var isMemberAccess = safeChar > 0 && lineText[safeChar - 1] == '.';
+
+					// For member access (dot trigger), use position-1 so Recommender
+					// has the full receiver expression in context.
+					var completionPosition = isMemberAccess ? position - 1 : position;
+
+					var recommended = await Recommender.GetRecommendedSymbolsAtPositionAsync(
+						roslynDoc, completionPosition);
+
+					var items = new JsonArray();
+					var seen = new HashSet<string>(StringComparer.Ordinal);
+
+					foreach (var sym in recommended)
+					{
+						if (!sym.CanBeReferencedByName || !seen.Add(sym.Name))
+							continue;
+
+						var kind = sym switch
+						{
+							INamedTypeSymbol { TypeKind: TypeKind.Enum } => 13,     // Enum
+							INamedTypeSymbol { TypeKind: TypeKind.Interface } => 8, // Interface
+							INamedTypeSymbol { TypeKind: TypeKind.Struct } => 22,   // Struct
+							INamedTypeSymbol => 7,                                  // Class
+							IMethodSymbol => 3,                                      // Method
+							IPropertySymbol => 10,                                   // Property
+							IFieldSymbol { IsConst: true } => 21,                   // Constant
+							IFieldSymbol => 5,                                       // Field
+							IEventSymbol => 23,                                      // Event
+							ILocalSymbol => 6,                                       // Variable
+							IParameterSymbol => 6,                                   // Variable
+							INamespaceSymbol => 9,                                   // Module/Namespace
+							_ => 6
+						};
+
+						var detail = sym switch
+						{
+							IMethodSymbol m => m.ReturnType.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
+							IPropertySymbol p => p.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
+							IFieldSymbol f => f.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
+							ILocalSymbol l => l.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
+							IParameterSymbol p => p.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
+							INamedTypeSymbol t => t.ContainingNamespace?.ToDisplayString() ?? "",
+							_ => ""
+						};
+
+						var entry = new JsonObject { ["label"] = sym.Name, ["kind"] = kind };
+						if (!string.IsNullOrEmpty(detail))
+							entry["detail"] = detail;
+						items.Add(entry);
+					}
+
+					if (items.Count > 0)
+					{
+						await LogAsync($"Completion: Roslyn returned {items.Count} items (memberAccess={isMemberAccess})");
+						return new JsonObject { ["isIncomplete"] = false, ["items"] = items };
+					}
+				}
+			}
+			catch (Exception ex)
+			{
+				await LogAsync($"Completion: Roslyn failed: {ex.Message}", 2);
+			}
+		}
+	}
+
+	return HandleCompletionFallback(requestRoot, documents);
+}
+
+static JsonNode HandleCompletionFallback(JsonElement requestRoot, ConcurrentDictionary<string, string> documents)
 {
 	var keywords = new[]
 	{
@@ -476,31 +572,15 @@ static JsonNode HandleCompletion(JsonElement requestRoot, ConcurrentDictionary<s
 
 	var items = new JsonArray();
 	foreach (var keyword in keywords)
-	{
-		items.Add(new JsonObject
-		{
-			["label"] = keyword,
-			["kind"] = 14
-		});
-	}
+		items.Add(new JsonObject { ["label"] = keyword, ["kind"] = 14 });
 
 	if (TryReadUri(requestRoot, out var uri) && documents.TryGetValue(uri, out var text))
 	{
 		foreach (var symbol in ExtractDeclaredSymbols(SplitLines(text)).Distinct(StringComparer.OrdinalIgnoreCase))
-		{
-			items.Add(new JsonObject
-			{
-				["label"] = symbol,
-				["kind"] = 6
-			});
-		}
+			items.Add(new JsonObject { ["label"] = symbol, ["kind"] = 6 });
 	}
 
-	return new JsonObject
-	{
-		["isIncomplete"] = false,
-		["items"] = items
-	};
+	return new JsonObject { ["isIncomplete"] = false, ["items"] = items };
 }
 
 async Task<JsonNode> HandleReferencesAsync(JsonElement requestRoot, ConcurrentDictionary<string, string> documents)

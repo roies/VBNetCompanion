@@ -8,6 +8,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.6] - 2026-02-28
+
+### Fixed
+
+- **IntelliSense missing for .NET types and member access**: completion now uses Roslyn's `Recommender.GetRecommendedSymbolsAtPositionAsync` to produce context-aware suggestions. Typing `ConsoleColor.` now shows `Cyan`, `Red`, `Green`, etc. with their types; typing in any expression context shows all in-scope symbols (locals, parameters, imported types, .NET framework types). The previous implementation only returned 20 hardcoded VB keywords plus symbols declared in the current file.
+
 ## [0.1.5] - 2026-02-28
 
 ### Fixed
