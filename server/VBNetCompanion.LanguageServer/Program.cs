@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -19,8 +19,24 @@ var standardInput = Console.OpenStandardInput();
 var standardOutput = Console.OpenStandardOutput();
 var workspaceRootPath = string.Empty;
 var workspaceLoadGate = new SemaphoreSlim(1, 1);
+// All writes to stdout must go through this gate to prevent concurrent-write
+// stream corruption (e.g. background PushDiagnosticsAsync vs. main response).
+var outputGate = new SemaphoreSlim(1, 1);
 MSBuildWorkspace? roslynWorkspace = null;
 Solution? roslynSolution = null;
+
+async Task SendAsync(JsonObject message)
+{
+	await outputGate.WaitAsync();
+	try
+	{
+		await WriteMessageAsync(standardOutput, message);
+	}
+	finally
+	{
+		outputGate.Release();
+	}
+}
 
 async Task LogAsync(string message, int type = 4 /* 1=error,2=warn,3=info,4=log */)
 {
@@ -34,7 +50,7 @@ async Task LogAsync(string message, int type = 4 /* 1=error,2=warn,3=info,4=log 
 			["message"] = $"[VBNetCompanion.LanguageServer] {message}"
 		}
 	};
-	await WriteMessageAsync(standardOutput, notification);
+	await SendAsync(notification);
 }
 
 while (true)
@@ -120,7 +136,7 @@ while (true)
 			}
 		};
 
-		await WriteMessageAsync(standardOutput, response);
+		await SendAsync(response);
 		continue;
 	}
 
@@ -137,7 +153,7 @@ while (true)
 			["id"] = idNode,
 			["result"] = null
 		};
-		await WriteMessageAsync(standardOutput, response);
+		await SendAsync(response);
 		continue;
 	}
 
@@ -185,7 +201,7 @@ while (true)
 			["id"] = idNode,
 			["result"] = await HandleDefinitionAsync(root, documents)
 		};
-		await WriteMessageAsync(standardOutput, response);
+		await SendAsync(response);
 		continue;
 	}
 
@@ -197,7 +213,7 @@ while (true)
 			["id"] = idNode,
 			["result"] = await HandleCompletionAsync(root, documents)
 		};
-		await WriteMessageAsync(standardOutput, response);
+		await SendAsync(response);
 		continue;
 	}
 
@@ -209,7 +225,7 @@ while (true)
 			["id"] = idNode,
 			["result"] = await HandleReferencesAsync(root, documents)
 		};
-		await WriteMessageAsync(standardOutput, response);
+		await SendAsync(response);
 		continue;
 	}
 
@@ -221,7 +237,7 @@ while (true)
 			["id"] = idNode,
 			["result"] = await HandleCodeLensAsync(root, documents)
 		};
-		await WriteMessageAsync(standardOutput, response);
+		await SendAsync(response);
 		continue;
 	}
 
@@ -233,7 +249,7 @@ while (true)
 			["id"] = idNode,
 			["result"] = await HandleSemanticTokensAsync(root, documents)
 		};
-		await WriteMessageAsync(standardOutput, response);
+		await SendAsync(response);
 		continue;
 	}
 
@@ -245,7 +261,7 @@ while (true)
 			["id"] = idNode,
 			["result"] = await HandleHoverAsync(root, documents)
 		};
-		await WriteMessageAsync(standardOutput, response);
+		await SendAsync(response);
 		continue;
 	}
 
@@ -257,7 +273,7 @@ while (true)
 			["id"] = idNode,
 			["result"] = await HandleDocumentSymbolAsync(root, documents)
 		};
-		await WriteMessageAsync(standardOutput, response);
+		await SendAsync(response);
 		continue;
 	}
 
@@ -269,7 +285,7 @@ while (true)
 			["id"] = idNode,
 			["result"] = await HandleDocumentHighlightAsync(root, documents)
 		};
-		await WriteMessageAsync(standardOutput, response);
+		await SendAsync(response);
 		continue;
 	}
 
@@ -281,7 +297,7 @@ while (true)
 			["id"] = idNode,
 			["result"] = await HandleSignatureHelpAsync(root, documents)
 		};
-		await WriteMessageAsync(standardOutput, response);
+		await SendAsync(response);
 		continue;
 	}
 
@@ -297,7 +313,7 @@ while (true)
 				["message"] = $"Method not implemented: {method}"
 			}
 		};
-		await WriteMessageAsync(standardOutput, response);
+		await SendAsync(response);
 	}
 }
 
@@ -766,7 +782,7 @@ async Task PushDiagnosticsAsync(string uri)
 				["diagnostics"] = diagArray
 			}
 		};
-		await WriteMessageAsync(standardOutput, notification);
+		await SendAsync(notification);
 		await LogAsync($"Diagnostics: {diagArray.Count} issues for {Path.GetFileName(filePath)}");
 	}
 	catch (Exception ex)
@@ -1747,7 +1763,13 @@ async Task<JsonNode?> TryGenerateMetadataStubLocationAsync(ISymbol symbol)
 	var safeName = Regex.Replace(qualifiedName, @"[^\w.]", "_");
 	var stubPath = Path.Combine(stubDir, safeName + ".vb");
 
-	await File.WriteAllTextAsync(stubPath, stubContent, Encoding.UTF8);
+	// Write the stub only if it doesn't already exist; swallow IOException from
+	// concurrent requests racing to write the same file.
+	if (!File.Exists(stubPath))
+	{
+		try { await File.WriteAllTextAsync(stubPath, stubContent, Encoding.UTF8); }
+		catch (IOException) { /* another concurrent F12 already wrote it — that's fine */ }
+	}
 
 	// Position the cursor on the member line (for fields/methods) or the type declaration line.
 	var targetName = symbol.Name;

@@ -8,6 +8,13 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.10] - 2026-02-28
+
+### Fixed
+
+- **Server crash on concurrent F12 to BCL types** (e.g. `Console.WriteLine`): two simultaneous Go-to-Definition requests racing to write the same metadata stub file (`System.Console.vb`) caused an `IOException` that crashed the server process. The stub is now written only when the file does not yet exist, with the `IOException` swallowed for the concurrent-write case.
+- **Corrupt LSP stream / server disconnect**: `PushDiagnosticsAsync` ran as a background `Task.Run` task and wrote to `stdout` concurrently with the main request-handling loop, interleaving `Content-Length` headers with JSON payload bytes. All stdout writes are now serialized through a `SemaphoreSlim outputGate` gate, eliminating the race entirely.
+
 ## [0.1.9] - 2026-02-28
 
 ### Added
