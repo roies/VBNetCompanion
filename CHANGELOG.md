@@ -8,6 +8,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.17] - 2026-02-28
+
+### Changed
+
+- Rewrote README for VS Marketplace visibility: feature-first ordering by developer desirability, full capability table, per-feature sections with code examples, and updated Getting Started and Requirements.
+
 ## [0.1.16] - 2026-02-28
 
 ### Fixed
