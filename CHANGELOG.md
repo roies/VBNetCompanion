@@ -8,6 +8,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.7] - 2026-02-28
+
+### Fixed
+
+- **F12 on .NET BCL types (e.g. `ConsoleColor`, `Console`, `String`) navigates to nowhere**: when a symbol has only metadata locations (no source file in the solution), the server now generates a readable VB.NET stub in a temp directory and navigates there. The stub shows the type's public members (fields/enum values, properties, methods, events) with their signatures and XML doc summaries, formatted as valid VB.NET syntax.
+
 ## [0.1.6] - 2026-02-28
 
 ### Fixed
