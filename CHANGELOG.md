@@ -8,6 +8,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.20] - 2026-02-28
+
+### Fixed
+
+- Suppressed built-in language client error popup notifications ("couldn't create connection to server", "Server initialization failed", "Pending response rejected since connection got disposed") by adding a custom `errorHandler` and setting `revealOutputChannelOn: Never` on the bridge client. Errors are still logged to the output channel.
+
 ## [0.1.19] - 2026-03-01
 
 ### Changed

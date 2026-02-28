@@ -83,6 +83,11 @@ export class DotnetLanguageClientBridge {
 				documentSelector,
 				outputChannel: this.outputChannel,
 				traceOutputChannel: this.outputChannel,
+				revealOutputChannelOn: languageClientModule.RevealOutputChannelOn.Never,
+				errorHandler: {
+					error: (_err, _msg, _count) => ({ action: languageClientModule.ErrorAction.Continue }),
+					closed: () => ({ action: languageClientModule.CloseAction.DoNotRestart })
+				},
 				synchronize: {
 					configurationSection: ['vbnetcompanion']
 				}
@@ -118,6 +123,11 @@ export class DotnetLanguageClientBridge {
 					documentSelector,
 					outputChannel: this.outputChannel,
 					traceOutputChannel: this.outputChannel,
+					revealOutputChannelOn: languageClientModule.RevealOutputChannelOn.Never,
+					errorHandler: {
+						error: (_err, _msg, _count) => ({ action: languageClientModule.ErrorAction.Continue }),
+						closed: () => ({ action: languageClientModule.CloseAction.DoNotRestart })
+					},
 					synchronize: {
 						configurationSection: ['vbnetcompanion']
 					}
