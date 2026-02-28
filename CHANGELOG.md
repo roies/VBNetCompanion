@@ -8,6 +8,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.14] - 2026-02-28
+
+### Fixed
+
+- **Ctrl+F12 still silent for cross-project concrete methods**: The v0.1.13 fallback in `HandleImplementationAsync` checked `symbol.Locations.Where(l => l.IsInSource)`, but cross-project symbols (e.g. a VB file calling a C# library method) have only metadata locations at that point. The fallback now mirrors `HandleDefinitionAsync`: if no in-source locations exist, it first calls `SymbolFinder.FindSourceDefinitionAsync` to get the real source symbol, then maps its locations. Ctrl+F12 on any concrete method — local or cross-project — now navigates to its definition.
+
 ## [0.1.13] - 2026-03-01
 
 ### Fixed

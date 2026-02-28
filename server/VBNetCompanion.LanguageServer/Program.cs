@@ -1288,11 +1288,18 @@ async Task<JsonNode> HandleImplementationAsync(JsonElement requestRoot, Concurre
 		await LogAsync($"Implementation failed: {ex.Message}", 2);
 	}
 
-	// Final fallback: return the symbol's own declaration so Ctrl+F12 is never silent
-	// (handles concrete methods that have no overrides or interface implementations).
+	// Final fallback: return the symbol's own declaration so Ctrl+F12 is never silent.
+	// For cross-project / cross-language symbols the resolved symbol may have only metadata
+	// locations, so we first attempt FindSourceDefinitionAsync (same as HandleDefinitionAsync).
 	if (locations.Count == 0)
 	{
-		foreach (var loc in symbol.Locations.Where(l => l.IsInSource))
+		var fallbackSymbol = symbol;
+		if (!symbol.Locations.Any(l => l.IsInSource))
+		{
+			var sourceDef = await SymbolFinder.FindSourceDefinitionAsync(symbol, context.Value.Solution);
+			if (sourceDef is not null) fallbackSymbol = sourceDef;
+		}
+		foreach (var loc in fallbackSymbol.Locations.Where(l => l.IsInSource))
 		{
 			var node = CreateLocationNode(loc);
 			if (seen.Add(node.ToJsonString())) locations.Add(node);
