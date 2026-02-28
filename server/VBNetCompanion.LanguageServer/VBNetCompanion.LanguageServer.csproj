@@ -12,4 +12,22 @@
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="4.13.0" />
     <PackageReference Include="Microsoft.CodeAnalysis.VisualBasic.Workspaces" Version="4.13.0" />
   </ItemGroup>
+
+  <!--
+    When PublishSingleFile=true, assemblies bundled inside the exe have Assembly.Location == "".
+    BuildHostProcessManager.GetNetCoreBuildHostPath() calls Assembly.Location on the MSBuild
+    workspace DLL to locate the sibling BuildHost-netcore/ folder — it crashes with
+    ArgumentNullException(path1) when that returns empty string.
+    Exclude these assemblies from bundling so they remain as loose files with a real Location.
+  -->
+  <ItemGroup>
+    <ExcludeFromSingleFile Include="Microsoft.CodeAnalysis.Workspaces.MSBuild.dll" />
+    <ExcludeFromSingleFile Include="Microsoft.CodeAnalysis.Workspaces.MSBuild.BuildHost.dll" />
+    <ExcludeFromSingleFile Include="Microsoft.CodeAnalysis.dll" />
+    <ExcludeFromSingleFile Include="Microsoft.CodeAnalysis.CSharp.dll" />
+    <ExcludeFromSingleFile Include="Microsoft.CodeAnalysis.VisualBasic.dll" />
+    <ExcludeFromSingleFile Include="Microsoft.CodeAnalysis.Workspaces.Common.dll" />
+    <ExcludeFromSingleFile Include="Microsoft.CodeAnalysis.CSharp.Workspaces.dll" />
+    <ExcludeFromSingleFile Include="Microsoft.CodeAnalysis.VisualBasic.Workspaces.dll" />
+  </ItemGroup>
 </Project>
