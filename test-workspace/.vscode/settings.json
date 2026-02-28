@@ -1,6 +1,6 @@
 {
     "vbnetcompanion.enableLanguageClientBridge": true,
-    "vbnetcompanion.languageClientServerCommand": "c:\\workspace\\VBNetCompanion\\server\\VBNetCompanion.LanguageServer\\publish\\VBNetCompanion.LanguageServer.exe",
+    "vbnetcompanion.languageClientServerCommand": "<path-to>/VBNetCompanion.LanguageServer.exe",
     "vbnetcompanion.languageClientServerArgs": [
         "--stdio"
     ],
