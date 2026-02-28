@@ -3392,14 +3392,17 @@ async Task<JsonNode> HandleCodeActionAsync(JsonElement requestRoot, ConcurrentDi
 	if (documents.TryGetValue(uri, out var liveText))
 		roslynDoc = roslynDoc.WithText(SourceText.From(liveText, Encoding.UTF8));
 
+	var isVb = filePath.EndsWith(".vb", StringComparison.OrdinalIgnoreCase);
+
 	try
 	{
-		var docText = await roslynDoc.GetTextAsync();
+		var docText       = await roslynDoc.GetTextAsync();
 		var semanticModel = await roslynDoc.GetSemanticModelAsync();
-		var diags   = semanticModel?.GetDiagnostics() ?? ImmutableArray<Diagnostic>.Empty;
+		var syntaxRoot    = await roslynDoc.GetSyntaxRootAsync();
+		var allDiags      = semanticModel?.GetDiagnostics() ?? ImmutableArray<Diagnostic>.Empty;
 
 		// ── 1) Remove all unused imports ────────────────────────────────────
-		var unusedImportDiags = diags.Where(d => d.Id == "BC50001" || d.Id == "CS8019").ToList();
+		var unusedImportDiags = allDiags.Where(d => d.Id == "BC50001" || d.Id == "CS8019").ToList();
 		if (unusedImportDiags.Count > 0)
 		{
 			var edits = new JsonArray();
@@ -3420,43 +3423,119 @@ async Task<JsonNode> HandleCodeActionAsync(JsonElement requestRoot, ConcurrentDi
 			});
 		}
 
-		// ── 2) Suppress each diagnostic reported at the cursor ───────────────
-		if (requestRoot.TryGetProperty("params", out var actionParams) &&
-		    actionParams.TryGetProperty("context", out var ctxEl) &&
-		    ctxEl.TryGetProperty("diagnostics", out var diagsEl))
+		// ── 2) Suppress diagnostics at the cursor line (from semantic model) ─
+		var cursorDiags = allDiags
+			.Where(d => d.Severity >= DiagnosticSeverity.Warning &&
+			            d.Location.GetLineSpan().StartLinePosition.Line == startLine)
+			.GroupBy(d => d.Id)
+			.Select(g => g.First())
+			.ToList();
+
+		var lineText = startLine < docText.Lines.Count ? docText.Lines[startLine].ToString() : string.Empty;
+		var indent   = new string(' ', lineText.Length - lineText.TrimStart().Length);
+
+		foreach (var diag in cursorDiags)
 		{
-			foreach (var diagEl in diagsEl.EnumerateArray())
+			var suppress = isVb ? $"#Disable Warning {diag.Id}" : $"#pragma warning disable {diag.Id}";
+			actions.Add(new JsonObject
 			{
-				if (!diagEl.TryGetProperty("code", out var codeEl)) continue;
-				var code = codeEl.ValueKind == JsonValueKind.String
-					? codeEl.GetString() ?? string.Empty
-					: codeEl.GetRawText();
-				if (string.IsNullOrWhiteSpace(code)) continue;
-
-				var isVb       = filePath.EndsWith(".vb", StringComparison.OrdinalIgnoreCase);
-				var suppress   = isVb ? $"#Disable Warning {code}" : $"#pragma warning disable {code}";
-				var lineText   = startLine < docText.Lines.Count ? docText.Lines[startLine].ToString() : string.Empty;
-				var indent     = new string(' ', lineText.Length - lineText.TrimStart().Length);
-
-				actions.Add(new JsonObject
+				["title"] = $"Suppress {diag.Id}: {diag.GetMessage().Split('.')[0].Trim()}",
+				["kind"]  = "quickfix",
+				["diagnostics"] = new JsonArray { BuildLspDiagnosticNode(diag) },
+				["edit"]  = new JsonObject
 				{
-					["title"] = $"Suppress {code}",
-					["kind"]  = "quickfix",
-					["edit"]  = new JsonObject
+					["changes"] = new JsonObject
 					{
-						["changes"] = new JsonObject
+						[uri] = new JsonArray
 						{
-							[uri] = new JsonArray
+							new JsonObject
 							{
-								new JsonObject
-								{
-									["range"]   = CreateRange(startLine, 0, startLine, 0),
-									["newText"] = $"{indent}{suppress}{Environment.NewLine}"
-								}
+								["range"]   = CreateRange(startLine, 0, startLine, 0),
+								["newText"] = $"{indent}{suppress}{Environment.NewLine}"
 							}
 						}
 					}
+				}
+			});
+		}
+
+		// ── 3) Add XML doc comment (always offered for declarations) ─────────
+		if (syntaxRoot is not null && semanticModel is not null &&
+		    startLine < docText.Lines.Count)
+		{
+			var cursorPos = docText.Lines.GetPosition(new LinePosition(startLine, 0));
+			var declNode  = syntaxRoot
+				.DescendantNodes()
+				.Where(n => n.SpanStart >= cursorPos || n.Span.Contains(cursorPos))
+				.FirstOrDefault(n =>
+				{
+					var tn = n.GetType().Name;
+					return tn.Contains("MethodBlock")      || tn.Contains("SubBlock")          ||
+					       tn.Contains("FunctionBlock")    || tn.Contains("SubStatement")       ||
+					       tn.Contains("FunctionStatement")|| tn.Contains("MethodDeclaration")  ||
+					       tn.Contains("ClassBlock")       || tn.Contains("ClassStatement")     ||
+					       tn.Contains("ClassDeclaration") || tn.Contains("InterfaceBlock")     ||
+					       tn.Contains("PropertyBlock")    || tn.Contains("PropertyStatement")  ||
+					       tn.Contains("PropertyDeclaration");
 				});
+
+			if (declNode is not null)
+			{
+				var sym = semanticModel.GetDeclaredSymbol(declNode);
+				if (sym is not null)
+				{
+					// Only offer if there is no existing doc comment
+					var trivia = declNode.GetLeadingTrivia();
+					var hasDoc  = trivia.Any(t =>
+						t.GetType().Name.Contains("DocumentationCommentTrivia") ||
+						t.ToString().TrimStart().StartsWith("'") && t.ToString().Contains("<summary>") ||
+						t.ToString().TrimStart().StartsWith("/") && t.ToString().Contains("<summary>"));
+
+					if (!hasDoc)
+					{
+						var declLine  = docText.Lines.GetLinePosition(declNode.SpanStart).Line;
+						var declText  = declLine < docText.Lines.Count ? docText.Lines[declLine].ToString() : string.Empty;
+						var declIndent = new string(' ', declText.Length - declText.TrimStart().Length);
+
+						var commentLines = new List<string>();
+						var prefix = isVb ? "'''" : "///";
+
+						commentLines.Add($"{declIndent}{prefix} <summary>");
+						commentLines.Add($"{declIndent}{prefix} {sym.Name}");
+						commentLines.Add($"{declIndent}{prefix} </summary>");
+
+						if (sym is IMethodSymbol methodSym2)
+						{
+							foreach (var p in methodSym2.Parameters)
+								commentLines.Add($"{declIndent}{prefix} <param name=\"{p.Name}\"></param>");
+							if (methodSym2.ReturnType.SpecialType != SpecialType.System_Void &&
+							    methodSym2.MethodKind != MethodKind.Constructor)
+								commentLines.Add($"{declIndent}{prefix} <returns></returns>");
+						}
+
+						var commentText = string.Join(Environment.NewLine, commentLines) + Environment.NewLine;
+
+						actions.Add(new JsonObject
+						{
+							["title"] = $"Add XML doc comment",
+							["kind"]  = "refactor.rewrite",
+							["edit"]  = new JsonObject
+							{
+								["changes"] = new JsonObject
+								{
+									[uri] = new JsonArray
+									{
+										new JsonObject
+										{
+											["range"]   = CreateRange(declLine, 0, declLine, 0),
+											["newText"] = commentText
+										}
+									}
+								}
+							}
+						});
+					}
+				}
 			}
 		}
 
@@ -3509,8 +3588,21 @@ static bool TryReadHintRange(JsonElement requestRoot, out int startLine, out int
 	return true;
 }
 
-static int SymbolToLspKind(ISymbol sym) => sym switch
+static JsonObject BuildLspDiagnosticNode(Diagnostic diag)
 {
+	var span  = diag.Location.GetLineSpan();
+	var start = span.StartLinePosition;
+	var end   = span.EndLinePosition;
+	return new JsonObject
+	{
+		["range"]    = CreateRange(start.Line, start.Character, end.Line, end.Character),
+		["severity"] = diag.Severity switch { DiagnosticSeverity.Error => 1, DiagnosticSeverity.Warning => 2, DiagnosticSeverity.Info => 3, _ => 4 },
+		["code"]     = diag.Id,
+		["message"]  = diag.GetMessage()
+	};
+}
+
+static int SymbolToLspKind(ISymbol sym) => sym switch{
 	INamedTypeSymbol { TypeKind: TypeKind.Class }        => 5,
 	INamedTypeSymbol { TypeKind: TypeKind.Enum }         => 10,
 	INamedTypeSymbol { TypeKind: TypeKind.Interface }    => 11,

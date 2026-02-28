@@ -8,6 +8,13 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.16] - 2026-02-28
+
+### Fixed
+
+- **Code actions / lightbulb not appearing**: VS Code does not echo back diagnostics sourced from `textDocument/publishDiagnostics` in the `codeAction` request's `context.diagnostics`, so the suppress action was always empty. The suppress logic now reads directly from `semanticModel.GetDiagnostics()` filtered to the cursor line — no dependency on the client echoing diagnostics back.
+- **Add XML doc comment**: new always-available `refactor.rewrite` action. When the cursor is on any class, method, sub, function, or property declaration that has no existing doc comment, the lightbulb offers “Add XML doc comment”. Inserts `''' <summary>` / `''' <param>` / `''' <returns>` (VB) or `/// ...` (C#) with correct indentation and parameter names from the symbol.
+
 ## [0.1.15] - 2026-02-28
 
 ### Added
