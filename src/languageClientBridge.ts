@@ -18,6 +18,10 @@ export class DotnetLanguageClientBridge {
 	constructor(private readonly outputChannel: vscode.OutputChannel) {}
 
 	public async startFromConfiguration(): Promise<void> {
+		// Stop any existing client before creating a new one to prevent two active servers.
+		if (this.client) {
+			await this.stop();
+		}
 		const config = vscode.workspace.getConfiguration('vbnetcompanion');
 		const enabled = config.get<boolean>('enableLanguageClientBridge', false);
 		if (!enabled) {

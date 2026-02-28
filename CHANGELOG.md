@@ -8,6 +8,13 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.13] - 2026-03-01
+
+### Fixed
+
+- **Duplicate hover / IntelliSense responses**: `startFromConfiguration` now stops any already-running `LanguageClient` before creating a new one. Previously, writing bootstrap settings triggered `onDidChangeConfiguration → restartFromConfiguration` (server #1) while the `.finally()` callback independently called `startFromConfiguration` (server #2), causing every provider to return results twice.
+- **Ctrl+F12 (Go to Implementation) silent on concrete methods**: `HandleImplementationAsync` now falls back to the symbol's own source declaration(s) when both `FindImplementationsAsync` and `FindOverridesAsync` return empty. Concrete methods that are neither overrides nor interface implementations now navigate to their own definition instead of silently doing nothing.
+
 ## [0.1.12] - 2026-02-28
 
 ### Added

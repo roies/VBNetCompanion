@@ -1288,6 +1288,17 @@ async Task<JsonNode> HandleImplementationAsync(JsonElement requestRoot, Concurre
 		await LogAsync($"Implementation failed: {ex.Message}", 2);
 	}
 
+	// Final fallback: return the symbol's own declaration so Ctrl+F12 is never silent
+	// (handles concrete methods that have no overrides or interface implementations).
+	if (locations.Count == 0)
+	{
+		foreach (var loc in symbol.Locations.Where(l => l.IsInSource))
+		{
+			var node = CreateLocationNode(loc);
+			if (seen.Add(node.ToJsonString())) locations.Add(node);
+		}
+	}
+
 	await LogAsync($"Implementation: {locations.Count} location(s) found");
 	return locations;
 }
