@@ -8,6 +8,14 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.12] - 2026-02-28
+
+### Added
+
+- **Rename** (`textDocument/rename`): rename any symbol (type, method, property, field, local, parameter) across all files in the solution using Roslyn `SymbolFinder.FindReferencesAsync`. Duplicate edits at the same location are deduplicated before returning the `WorkspaceEdit`.
+- **Folding ranges** (`textDocument/foldingRange`): classes, modules, methods, loops, conditionals, try/catch, and other block constructs are foldable in the editor gutter. Works for both VB.NET and C# files by inspecting Roslyn syntax node class names.
+- **Go to Implementation** (`textDocument/implementation`): navigates to concrete implementations of an interface member or virtual method via `SymbolFinder.FindImplementationsAsync`. Falls back to `FindOverridesAsync` when called on a virtual/abstract member that has no interface implementations.
+
 ## [0.1.11] - 2026-02-28
 
 ### Fixed

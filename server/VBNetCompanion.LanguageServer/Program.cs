@@ -126,7 +126,10 @@ while (true)
 					["signatureHelpProvider"] = new JsonObject
 					{
 						["triggerCharacters"] = new JsonArray("(", ",")
-					}
+					},
+					["renameProvider"] = true,
+					["foldingRangeProvider"] = true,
+					["implementationProvider"] = true
 				},
 				["serverInfo"] = new JsonObject
 				{
@@ -296,6 +299,42 @@ while (true)
 			["jsonrpc"] = JsonRpcVersion,
 			["id"] = idNode,
 			["result"] = await HandleSignatureHelpAsync(root, documents)
+		};
+		await SendAsync(response);
+		continue;
+	}
+
+	if (method == "textDocument/rename")
+	{
+		var response = new JsonObject
+		{
+			["jsonrpc"] = JsonRpcVersion,
+			["id"] = idNode,
+			["result"] = await HandleRenameAsync(root, documents)
+		};
+		await SendAsync(response);
+		continue;
+	}
+
+	if (method == "textDocument/foldingRange")
+	{
+		var response = new JsonObject
+		{
+			["jsonrpc"] = JsonRpcVersion,
+			["id"] = idNode,
+			["result"] = await HandleFoldingRangeAsync(root, documents)
+		};
+		await SendAsync(response);
+		continue;
+	}
+
+	if (method == "textDocument/implementation")
+	{
+		var response = new JsonObject
+		{
+			["jsonrpc"] = JsonRpcVersion,
+			["id"] = idNode,
+			["result"] = await HandleImplementationAsync(root, documents)
 		};
 		await SendAsync(response);
 		continue;
@@ -1027,6 +1066,230 @@ async Task<JsonNode?> HandleSignatureHelpAsync(JsonElement requestRoot, Concurre
 		await LogAsync($"SignatureHelp failed: {ex.Message}", 2);
 		return null;
 	}
+}
+
+// ─── Rename ───────────────────────────────────────────────────────────────────
+async Task<JsonNode?> HandleRenameAsync(JsonElement requestRoot, ConcurrentDictionary<string, string> documents)
+{
+	var context = await TryResolveRoslynContextAsync(requestRoot);
+	if (context is null) return null;
+
+	// Read the new name from params.newName
+	if (!requestRoot.TryGetProperty("params", out var p) || !p.TryGetProperty("newName", out var newNameEl))
+		return null;
+	var newName = newNameEl.GetString();
+	if (string.IsNullOrWhiteSpace(newName)) return null;
+
+	var doc = context.Value.Document;
+	if (TryReadPosition(requestRoot, out var renUri, out var renLine, out var renChar)
+		&& documents.TryGetValue(renUri, out var liveText))
+	{
+		var lst = SourceText.From(liveText, Encoding.UTF8);
+		doc = doc.WithText(lst);
+	}
+
+	var symbol = await ResolveSymbolAtPositionAsync(doc, context.Value.Position);
+	if (symbol is null)
+	{
+		await LogAsync("Rename: no symbol at position");
+		return null;
+	}
+
+	await LogAsync($"Rename: renaming '{symbol.Name}' → '{newName}'");
+
+	var refs = await SymbolFinder.FindReferencesAsync(symbol, context.Value.Solution);
+	var changesByUri = new Dictionary<string, List<JsonObject>>(StringComparer.OrdinalIgnoreCase);
+
+	foreach (var referencedSymbol in refs)
+	{
+		// Declaration sites
+		foreach (var loc in referencedSymbol.Definition.Locations.Where(l => l.IsInSource))
+		{
+			var fileUri = new Uri(loc.SourceTree!.FilePath).AbsoluteUri;
+			if (!changesByUri.TryGetValue(fileUri, out var list))
+				changesByUri[fileUri] = list = new List<JsonObject>();
+			var ls = loc.GetLineSpan();
+			list.Add(new JsonObject
+			{
+				["range"]   = CreateRange(ls.StartLinePosition.Line, ls.StartLinePosition.Character, ls.EndLinePosition.Line, ls.EndLinePosition.Character),
+				["newText"] = newName
+			});
+		}
+		// Reference sites
+		foreach (var refLoc in referencedSymbol.Locations)
+		{
+			var loc = refLoc.Location;
+			if (!loc.IsInSource) continue;
+			var fileUri = new Uri(loc.SourceTree!.FilePath).AbsoluteUri;
+			if (!changesByUri.TryGetValue(fileUri, out var list))
+				changesByUri[fileUri] = list = new List<JsonObject>();
+			var ls = loc.GetLineSpan();
+			list.Add(new JsonObject
+			{
+				["range"]   = CreateRange(ls.StartLinePosition.Line, ls.StartLinePosition.Character, ls.EndLinePosition.Line, ls.EndLinePosition.Character),
+				["newText"] = newName
+			});
+		}
+	}
+
+	if (changesByUri.Count == 0) return null;
+
+	var documentChanges = new JsonObject();
+	foreach (var (fileUri, edits) in changesByUri)
+	{
+		// Deduplicate edits at identical ranges (declaration can appear in both sets)
+		var seen    = new HashSet<string>();
+		var unique  = new JsonArray();
+		foreach (var edit in edits)
+		{
+			var key = edit.ToJsonString();
+			if (seen.Add(key)) unique.Add(edit);
+		}
+		documentChanges[fileUri] = unique;
+	}
+
+	await LogAsync($"Rename: {changesByUri.Values.Sum(v => v.Count)} edits across {changesByUri.Count} file(s)");
+	return new JsonObject { ["changes"] = documentChanges };
+}
+
+// ─── Folding Ranges ───────────────────────────────────────────────────────────
+async Task<JsonNode> HandleFoldingRangeAsync(JsonElement requestRoot, ConcurrentDictionary<string, string> documents)
+{
+	var empty = new JsonArray();
+	await EnsureRoslynWorkspaceLoadedAsync(forceReload: false);
+	if (roslynSolution is null || !TryReadUri(requestRoot, out var uri) || !TryGetFilePathFromUri(uri, out var filePath))
+		return empty;
+
+	var docId    = roslynSolution.GetDocumentIdsWithFilePath(filePath).FirstOrDefault();
+	var roslynDoc = docId is not null ? roslynSolution.GetDocument(docId) : null;
+	if (roslynDoc is null) return empty;
+
+	if (documents.TryGetValue(uri, out var liveText))
+		roslynDoc = roslynDoc.WithText(SourceText.From(liveText, Encoding.UTF8));
+
+	try
+	{
+		var syntaxRoot = await roslynDoc.GetSyntaxRootAsync();
+		var srcText    = await roslynDoc.GetTextAsync();
+		if (syntaxRoot is null) return empty;
+
+		var ranges = new JsonArray();
+		var seen   = new HashSet<int>(); // track start lines to avoid duplicates
+
+		foreach (var node in syntaxRoot.DescendantNodesAndSelf())
+		{
+			// Use the runtime class name (e.g. "ClassBlockSyntax", "MethodDeclarationSyntax")
+			// rather than Kind(), which requires a language-specific SyntaxNode subtype.
+			var kind      = node.GetType().Name;
+			var foldKind  = (string?)null;
+			var isFoldable = false;
+
+			// VB syntax class names end in "Syntax" and contain "Block"
+			// C# class names end in "Syntax" and contain "Declaration" or "Statement"
+			if (kind.Contains("Block") || kind.Contains("Declaration") || kind.Contains("Statement"))
+			{
+				isFoldable = true;
+				if (kind.Contains("Class") || kind.Contains("Module") || kind.Contains("Structure")
+					|| kind.Contains("Namespace") || kind.Contains("Interface") || kind.Contains("Enum"))
+					foldKind = "region";
+				else if (kind.Contains("Method") || kind.Contains("Sub") || kind.Contains("Function")
+						|| kind.Contains("Constructor") || kind.Contains("Property") || kind.Contains("Accessor"))
+					foldKind = "region";
+				else
+					foldKind = null; // VSCode default (collapses to "...")
+			}
+
+			if (!isFoldable) continue;
+
+			var startLine = srcText.Lines.GetLinePosition(node.SpanStart).Line;
+			var endLine   = srcText.Lines.GetLinePosition(node.Span.End).Line;
+
+			// Only emit multi-line ranges that haven't been started already
+			if (endLine <= startLine || !seen.Add(startLine)) continue;
+
+			var entry = new JsonObject
+			{
+				["startLine"] = startLine,
+				["endLine"]   = endLine - 1   // LSP convention: endLine is the last line shown when folded
+			};
+			if (foldKind is not null) entry["kind"] = foldKind;
+			ranges.Add(entry);
+		}
+
+		await LogAsync($"FoldingRange: {ranges.Count} ranges for {Path.GetFileName(filePath)}");
+		return ranges;
+	}
+	catch (Exception ex)
+	{
+		await LogAsync($"FoldingRange failed: {ex.Message}", 2);
+		return empty;
+	}
+}
+
+// ─── Go to Implementation ─────────────────────────────────────────────────────
+async Task<JsonNode> HandleImplementationAsync(JsonElement requestRoot, ConcurrentDictionary<string, string> documents)
+{
+	var empty = new JsonArray();
+
+	var context = await TryResolveRoslynContextAsync(requestRoot);
+	if (context is null) return empty;
+
+	var doc = context.Value.Document;
+	if (TryReadPosition(requestRoot, out var implUri, out var implLine, out var implChar)
+		&& documents.TryGetValue(implUri, out var liveText))
+	{
+		var lst = SourceText.From(liveText, Encoding.UTF8);
+		doc = doc.WithText(lst);
+	}
+
+	var symbol = await ResolveSymbolAtPositionAsync(doc, context.Value.Position);
+	if (symbol is null)
+	{
+		await LogAsync("Implementation: no symbol at position");
+		return empty;
+	}
+
+	await LogAsync($"Implementation: finding implementations of '{symbol.Name}' ({symbol.Kind})");
+
+	var locations = new JsonArray();
+	var seen      = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+	try
+	{
+		var impls = await SymbolFinder.FindImplementationsAsync(symbol, context.Value.Solution);
+		foreach (var impl in impls)
+		{
+			foreach (var loc in impl.Locations.Where(l => l.IsInSource))
+			{
+				var node = CreateLocationNode(loc);
+				var key  = node.ToJsonString();
+				if (seen.Add(key)) locations.Add(node);
+			}
+		}
+
+		// If no implementations were found (e.g. called on a concrete type rather than interface),
+		// fall back to overrides (for virtual/abstract members).
+		if (locations.Count == 0)
+		{
+			var overrides = await SymbolFinder.FindOverridesAsync(symbol, context.Value.Solution);
+			foreach (var ov in overrides)
+			{
+				foreach (var loc in ov.Locations.Where(l => l.IsInSource))
+				{
+					var node = CreateLocationNode(loc);
+					var key  = node.ToJsonString();
+					if (seen.Add(key)) locations.Add(node);
+				}
+			}
+		}
+	}
+	catch (Exception ex)
+	{
+		await LogAsync($"Implementation failed: {ex.Message}", 2);
+	}
+
+	await LogAsync($"Implementation: {locations.Count} location(s) found");
+	return locations;
 }
 
 async Task<JsonNode> HandleCompletionAsync(JsonElement requestRoot, ConcurrentDictionary<string, string> documents)
