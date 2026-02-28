@@ -186,6 +186,12 @@ export class DotnetLanguageClientBridge {
 	}
 
 	private resolveBridgeLaunch(command: string, args: string[]): { command: string; args: string[]; reason?: string } {
+		// If the configured command exists on disk, use it directly.
+		if (command.toLowerCase() !== 'dotnet' && fs.existsSync(command)) {
+			return { command, args };
+		}
+
+		// Binary doesn't exist — fall back to `dotnet run` against the companion project if available.
 		const looksLikeCompanionBinary = `${command} ${args.join(' ')}`.toLowerCase().includes('vbnetcompanion.languageserver');
 		if (!looksLikeCompanionBinary) {
 			return { command, args };
@@ -199,7 +205,7 @@ export class DotnetLanguageClientBridge {
 		return {
 			command: 'dotnet',
 			args: ['run', '--project', projectPath, '--', '--stdio'],
-			reason: 'Using companion project launch to avoid policy-blocked binary execution.'
+			reason: 'Configured binary not found; falling back to companion project launch via dotnet run.'
 		};
 	}
 
