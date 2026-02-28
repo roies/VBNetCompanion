@@ -679,7 +679,13 @@ async Task<JsonNode> HandleCodeLensAsync(JsonElement requestRoot, ConcurrentDict
 		var referenceLocations = new JsonArray();
 		var referenceCount = 0;
 
-		foreach (var document in documents)
+		// Without Roslyn we can't disambiguate same-named symbols across files,
+		// so only search the current file to avoid false cross-file matches.
+		var singleFileDocuments = documents
+			.Where(d => string.Equals(d.Key, uri, StringComparison.OrdinalIgnoreCase))
+			.ToList();
+
+		foreach (var document in singleFileDocuments)
 		{
 			var documentLines = SplitLines(document.Value);
 			for (var lineIndex = 0; lineIndex < documentLines.Count; lineIndex++)
