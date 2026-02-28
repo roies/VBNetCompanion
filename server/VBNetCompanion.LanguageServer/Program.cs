@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
 using Microsoft.Build.Locator;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.FindSymbols;
@@ -1151,8 +1152,8 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 
 		var solutionPath = Directory
 			.GetFiles(workspaceRootPath, "*.sln", SearchOption.TopDirectoryOnly)
-			.Concat(Directory.GetFiles(workspaceRootPath, "*.slnx", SearchOption.TopDirectoryOnly))
 			.FirstOrDefault();
+
 		if (!string.IsNullOrWhiteSpace(solutionPath))
 		{
 			try
@@ -1166,20 +1167,52 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 			catch (Exception ex)
 			{
 				await LogAsync($"Solution load failed ({solutionPath}): {ex.Message} — falling back to project load", 2);
-				// Fall back to project loading for environments where .slnx is unsupported.
 			}
 		}
 
-		var projectPaths = Directory
+		// Try to read project paths from a .slnx file (XML format not supported by OpenSolutionAsync).
+		var slnxPath = Directory
+			.GetFiles(workspaceRootPath, "*.slnx", SearchOption.TopDirectoryOnly)
+			.FirstOrDefault();
+
+		var slnxProjectPaths = new List<string>();
+		if (!string.IsNullOrWhiteSpace(slnxPath))
+		{
+			try
+			{
+				var slnxDoc = XDocument.Load(slnxPath);
+				foreach (var projectElement in slnxDoc.Descendants("Project"))
+				{
+					var relPath = projectElement.Attribute("Path")?.Value;
+					if (string.IsNullOrWhiteSpace(relPath)) continue;
+					var absPath = Path.GetFullPath(Path.Combine(workspaceRootPath, relPath));
+					if (File.Exists(absPath)) slnxProjectPaths.Add(absPath);
+				}
+				await LogAsync($"Parsed .slnx: {slnxProjectPaths.Count} project(s) from {slnxPath}");
+			}
+			catch (Exception ex)
+			{
+				await LogAsync($".slnx parse failed: {ex.Message}", 2);
+			}
+		}
+
+		// Fall back to scanning the workspace for projects, excluding bin/obj.
+		var excludedSegments = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "bin", "obj", ".git", "node_modules" };
+		var scannedProjectPaths = Directory
 			.GetFiles(workspaceRootPath, "*.csproj", SearchOption.AllDirectories)
 			.Concat(Directory.GetFiles(workspaceRootPath, "*.vbproj", SearchOption.AllDirectories))
+			.Where(p => !Path.GetFullPath(p).Split(Path.DirectorySeparatorChar).Any(seg => excludedSegments.Contains(seg)))
 			.ToList();
+
+		var projectPaths = slnxProjectPaths.Count > 0 ? slnxProjectPaths : scannedProjectPaths;
 
 		if (projectPaths.Count == 0)
 		{
+			await LogAsync("No projects found to load", 2);
 			return;
 		}
 
+		await LogAsync($"Loading {projectPaths.Count} project(s): {string.Join(", ", projectPaths.Select(Path.GetFileName))}");
 		foreach (var projectPath in projectPaths)
 		{
 			var project = await workspace.OpenProjectAsync(projectPath);
@@ -1188,7 +1221,7 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 
 		roslynWorkspace = workspace;
 		foreach (var f in workspaceFailures) await LogAsync($"WorkspaceDiag: {f}", 2);
-		await LogAsync($"Roslyn projects loaded: {roslynSolution?.Projects.Count() ?? 0} project(s) via individual project scan");
+		await LogAsync($"Roslyn projects loaded: {roslynSolution?.Projects.Count() ?? 0} project(s)");
 	}
 	catch (Exception ex)
 	{
