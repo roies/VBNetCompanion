@@ -10,6 +10,7 @@ public class CSharpGreeter
     public void Run()
     {
         var message = GetMessage("Developer");
-        _ = message.Length;
+        int localValue = message.Length;
+        _ = localValue.ToString();
     }
 }

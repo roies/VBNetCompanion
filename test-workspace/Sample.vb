@@ -5,6 +5,7 @@ Public Class VbGreeter
 
     Public Sub Run()
         Dim message As String = GetMessage("Developer")
-        Dim length As Integer = message.Length
+        Dim localValue As Integer = message.Length
+        Dim result As String = localValue.ToString()
     End Sub
 End Class
