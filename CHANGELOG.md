@@ -8,6 +8,13 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.4] - 2026-02-28
+
+### Fixed
+
+- **Go to Definition fails for C#-defined types from VB.NET files**: pressing F12 on a C# type (e.g. `DataAnalyzer`, `StringHelper`) from a consuming VB.NET file now correctly navigates to the C# source. In cross-language P2P workspaces, Roslyn may surface the target type as a metadata symbol without an in-source location. A new `FindDeclarationsAsync` fallback scans the full solution by symbol name and kind so the source file is always found.
+- **Silent failure when VB file is not tracked in Roslyn solution**: `textDocument/definition` requests on files not yet indexed by the Roslyn workspace now emit a diagnostic log entry listing the loaded projects, making the root cause immediately visible in the output channel.
+
 ## [0.1.3] - 2026-02-28
 
 ### Fixed

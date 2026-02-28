@@ -1044,9 +1044,13 @@ async Task<JsonNode?> TryHandleDefinitionWithRoslynAsync(JsonElement requestRoot
 		.Where(location => location.IsInSource && location.SourceTree is not null)
 		.FirstOrDefault();
 
-	// If still no source location, try to resolve through the source definition (handles metadata stubs).
+	// If still no source location, try to resolve through the source definition (handles metadata stubs,
+	// including cross-language P2P references where VB sees C# types as metadata).
 	if (sourceLocation is null)
 	{
+		var locationKinds = string.Join(", ", navigationSymbol.Locations.Select(l => l.IsInSource ? "src" : "meta"));
+		await LogAsync($"Definition: no direct source location for '{navigationSymbol.Name}' — locations: [{locationKinds}], trying FindSourceDefinitionAsync");
+
 		var sourceDef = await SymbolFinder.FindSourceDefinitionAsync(navigationSymbol, context.Value.Solution);
 		if (sourceDef is not null)
 		{
@@ -1057,12 +1061,48 @@ async Task<JsonNode?> TryHandleDefinitionWithRoslynAsync(JsonElement requestRoot
 			{
 				await LogAsync($"Definition: found source definition via FindSourceDefinitionAsync for '{sourceDef.Name}'");
 			}
+			else
+			{
+				await LogAsync($"Definition: FindSourceDefinitionAsync returned '{sourceDef.Name}' but still no in-source location");
+			}
+		}
+		else
+		{
+			await LogAsync($"Definition: FindSourceDefinitionAsync returned null for '{navigationSymbol.Name}'");
+		}
+	}
+
+	// Last-resort: search by name across all solution projects.
+	// This is needed when cross-language P2P references produce metadata symbols
+	// that FindSourceDefinitionAsync cannot re-link (e.g., VB consuming a C# project).
+	if (sourceLocation is null)
+	{
+		await LogAsync($"Definition: trying FindDeclarationsAsync fallback for '{navigationSymbol.Name}'");
+		foreach (var project in context.Value.Solution.Projects)
+		{
+			var decls = await SymbolFinder.FindDeclarationsAsync(
+				project, navigationSymbol.Name, ignoreCase: false,
+				filter: SymbolFilter.Type | SymbolFilter.Member);
+			var matchingDecl = decls.FirstOrDefault(d =>
+				d.Kind == navigationSymbol.Kind &&
+				string.Equals(d.Name, navigationSymbol.Name, StringComparison.Ordinal));
+			if (matchingDecl is not null)
+			{
+				sourceLocation = matchingDecl.Locations
+					.Where(l => l.IsInSource && l.SourceTree is not null)
+					.FirstOrDefault();
+				if (sourceLocation is not null)
+				{
+					await LogAsync($"Definition: found via FindDeclarationsAsync in project '{project.Name}'");
+					break;
+				}
+			}
 		}
 	}
 
 	if (sourceLocation is null)
 	{
-		await LogAsync($"Definition: no source location found for '{navigationSymbol.Name}' (locations: {navigationSymbol.Locations.Length})");
+		await LogAsync($"Definition: no source location found for '{navigationSymbol.Name}' after all fallbacks");
 		return null;
 	}
 
@@ -1182,6 +1222,8 @@ async Task<(Document Document, int Position, Solution Solution)?> TryResolveRosl
 	var documentId = roslynSolution.GetDocumentIdsWithFilePath(filePath).FirstOrDefault();
 	if (documentId is null)
 	{
+		var projectNames = string.Join(", ", roslynSolution.Projects.Select(p => p.Name));
+		await LogAsync($"Definition: file not found in Roslyn solution (projects: {projectNames}) — {filePath}", 2);
 		return null;
 	}
 
