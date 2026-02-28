@@ -2,7 +2,7 @@
   "name": "vbnet-companion",
   "displayName": "VB.NET Companion",
   "description": "Enhances .NET support with focus on VB.NET parity with C# for navigation, IntelliSense, and refactoring.",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "publisher": "roies",
   "icon": "images/icon.png",
   "keywords": ["vb.net", "visual basic", "vbnet", "vb", "basic", ".net", "dotnet", "csharp", "c#", "roslyn", "language server", "lsp", "intellisense", "completions", "hover", "go to definition", "find references", "rename", "inlay hints", "call hierarchy", "code actions", "codelens", "parity", "mixed language", "cross-language", "solution"],
@@ -14,7 +14,6 @@
   "engines": {
     "vscode": "^1.109.0"
   },
-  "os": ["win32"],
   "categories": [
     "Programming Languages"
   ],
@@ -51,6 +50,39 @@
       {
         "command": "vbnetcompanion.showReferencesFromBridge",
         "title": "VB.NET Companion: Show References From Bridge"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "vbnet",
+        "label": "VB.NET (Companion)",
+        "languages": ["vb"],
+        "configurationSnippets": [
+          {
+            "label": "VB.NET: Launch",
+            "description": "Launch a VB.NET console or library application",
+            "body": {
+              "name": "Launch (VB.NET)",
+              "type": "vbnet",
+              "request": "launch",
+              "program": "^\"\\${workspaceFolder}/bin/Debug/net8.0/\\${workspaceFolderBasename}.exe\"",
+              "args": [],
+              "cwd": "^\"\\${workspaceFolder}\"",
+              "console": "internalConsole",
+              "stopAtEntry": false
+            }
+          },
+          {
+            "label": "VB.NET: Attach",
+            "description": "Attach to a running VB.NET process",
+            "body": {
+              "name": "Attach (VB.NET)",
+              "type": "vbnet",
+              "request": "attach",
+              "processId": "^\"\\${command:pickProcess}\""
+            }
+          }
+        ]
       }
     ],
     "configuration": {
@@ -142,6 +174,10 @@
   "scripts": {
     "vscode:prepublish": "npm run build:server && npm run package",
     "build:server": "dotnet publish ./server/VBNetCompanion.LanguageServer/VBNetCompanion.LanguageServer.csproj -c Release -r win-x64 --self-contained false -o ./server/VBNetCompanion.LanguageServer/publish",
+    "build:server:win": "dotnet publish ./server/VBNetCompanion.LanguageServer/VBNetCompanion.LanguageServer.csproj -c Release -r win-x64 --self-contained false -o ./server/VBNetCompanion.LanguageServer/publish/win-x64",
+    "build:server:linux": "dotnet publish ./server/VBNetCompanion.LanguageServer/VBNetCompanion.LanguageServer.csproj -c Release -r linux-x64 --self-contained false -o ./server/VBNetCompanion.LanguageServer/publish/linux-x64",
+    "build:server:osx": "dotnet publish ./server/VBNetCompanion.LanguageServer/VBNetCompanion.LanguageServer.csproj -c Release -r osx-arm64 --self-contained false -o ./server/VBNetCompanion.LanguageServer/publish/osx-arm64",
+    "build:server:all": "npm-run-all build:server:win build:server:linux build:server:osx",
     "compile": "npm run check-types && npm run lint && node esbuild.js",
     "watch": "npm-run-all -p watch:*",
     "watch:esbuild": "node esbuild.js --watch",

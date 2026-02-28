@@ -20,6 +20,7 @@ VB.NET has been a second-class citizen in VS Code for too long. VB.NET Companion
 | Inlay hints | Inline parameter names |
 | Go to Implementation | `Ctrl+F12` |
 | Call hierarchy | Right-click → Peek Call Hierarchy |
+| Type hierarchy | Right-click → Show Type Hierarchy |
 | Workspace symbol search | `Ctrl+T` |
 | Cross-project CodeLens | Reference counts above every symbol |
 | Document symbols (Outline) | Explorer → Outline panel |
@@ -27,6 +28,10 @@ VB.NET has been a second-class citizen in VS Code for too long. VB.NET Companion
 | Folding ranges | Gutter fold markers |
 | Semantic token colors | Full syntax highlighting |
 | Live diagnostics | On open and on change |
+| Document formatting | `Shift+Alt+F` / Format Document |
+| Selection ranges | `Shift+Alt+→` Expand Selection |
+| Document links | Clickable URLs in comments & strings |
+| Debug (VB.NET launch type) | `F5` with `"type": "vbnet"` config |
 | VB.NET parity report | Status bar indicator |
 
 ---
@@ -175,7 +180,7 @@ On first activation the extension automatically detects your solution file (`.sl
 3. The Roslyn bridge starts automatically and loads all projects.
 4. Open any `.vb` file — all features activate immediately.
 
-> **Platform:** Windows (win-x64). The bundled companion server is a .NET 8 win-x64 binary. macOS and Linux support is planned.
+> **Platform:** Windows, Linux x64, macOS arm64. The bundled companion server is a .NET 8 managed assembly run via `dotnet` on all platforms. The Windows build produces a self-hosted `.exe` in addition to the portable `.dll`.
 
 ---
 

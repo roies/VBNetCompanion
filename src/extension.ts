@@ -224,6 +224,45 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 
 	context.subscriptions.push(showParityStatusCommand, remediateParityGapsCommand, restartDotnetLanguageServicesCommand, restartLanguageClientBridgeCommand, applyRoslynBridgePresetCommand, checkLanguageClientBridgeCompatibilityCommand, showReferencesFromBridgeCommand);
+
+	// Register debug configuration provider — rewrites 'vbnet' type to 'coreclr' (C# extension's adapter)
+	const vbnetDebugProvider = vscode.debug.registerDebugConfigurationProvider('vbnet', {
+		provideDebugConfigurations(_folder: vscode.WorkspaceFolder | undefined): vscode.ProviderResult<vscode.DebugConfiguration[]> {
+			return [
+				{
+					name: 'Launch (VB.NET)',
+					type: 'vbnet',
+					request: 'launch',
+					program: '${workspaceFolder}/bin/Debug/net8.0/${workspaceFolderBasename}.exe',
+					args: [],
+					cwd: '${workspaceFolder}',
+					console: 'internalConsole',
+					stopAtEntry: false
+				},
+				{
+					name: 'Attach (VB.NET)',
+					type: 'vbnet',
+					request: 'attach',
+					processId: '${command:pickProcess}'
+				}
+			];
+		},
+		resolveDebugConfiguration(
+			_folder: vscode.WorkspaceFolder | undefined,
+			config: vscode.DebugConfiguration
+		): vscode.ProviderResult<vscode.DebugConfiguration> {
+			// Rewrite 'vbnet' type to 'coreclr' so the C# extension's DAP adapter handles it
+			const rewritten: vscode.DebugConfiguration = { ...config, type: 'coreclr' };
+			if (!rewritten['program']) {
+				rewritten['program'] = '${workspaceFolder}/bin/Debug/net8.0/${workspaceFolderBasename}.exe';
+			}
+			if (!rewritten['request']) {
+				rewritten['request'] = 'launch';
+			}
+			return rewritten;
+		}
+	});
+	context.subscriptions.push(vbnetDebugProvider);
  	context.subscriptions.push({
 		dispose: () => {
 			if (refreshTimer) {
@@ -674,7 +713,6 @@ function detectCompanionServerLaunch(context: vscode.ExtensionContext): Companio
 	if (process.platform === 'win32') {
 		for (const candidate of candidateExePaths) {
 			if (fs.existsSync(candidate)) {
-				const siblingDllPath = candidate.replace(/\.exe$/i, '.dll');
 				return {
 					command: candidate,
 					args: ['--stdio'],
@@ -684,7 +722,15 @@ function detectCompanionServerLaunch(context: vscode.ExtensionContext): Companio
 		}
 	}
 
+	// Platform-specific publish directories (created by build:server:linux / build:server:osx)
+	const platformPublishDir = process.platform === 'linux'
+		? 'publish/linux-x64'
+		: process.platform === 'darwin'
+			? 'publish/osx-arm64'
+			: 'publish/win-x64';
+
 	const candidateDllPaths = [
+		path.join(context.extensionPath, serverRelativePath, platformPublishDir, serverDllName),
 		path.join(context.extensionPath, serverRelativePath, 'publish', serverDllName),
 		path.join(context.extensionPath, serverRelativePath, 'bin', 'Release', 'net8.0', serverDllName),
 		path.join(context.extensionPath, serverRelativePath, 'bin', 'Debug', 'net8.0', serverDllName)

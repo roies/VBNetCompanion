@@ -9,6 +9,7 @@ using Microsoft.Build.Locator;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Classification;
 using Microsoft.CodeAnalysis.FindSymbols;
+using Microsoft.CodeAnalysis.Formatting;
 using Microsoft.CodeAnalysis.MSBuild;
 using Microsoft.CodeAnalysis.Recommendations;
 using Microsoft.CodeAnalysis.Text;
@@ -134,7 +135,12 @@ while (true)
 					["inlayHintProvider"] = true,
 					["workspaceSymbolProvider"] = true,
 					["callHierarchyProvider"] = true,
-					["codeActionProvider"] = new JsonObject { ["resolveProvider"] = false }
+					["codeActionProvider"] = new JsonObject { ["resolveProvider"] = false },
+					["documentFormattingProvider"] = true,
+					["documentRangeFormattingProvider"] = true,
+					["selectionRangeProvider"] = true,
+					["documentLinkProvider"] = new JsonObject { ["resolveProvider"] = false },
+					["typeHierarchyProvider"] = true
 				},
 				["serverInfo"] = new JsonObject
 				{
@@ -412,6 +418,90 @@ while (true)
 			["jsonrpc"] = JsonRpcVersion,
 			["id"] = idNode,
 			["result"] = await HandleCodeActionAsync(root, documents)
+		};
+		await SendAsync(response);
+		continue;
+	}
+
+	if (method == "textDocument/formatting")
+	{
+		var response = new JsonObject
+		{
+			["jsonrpc"] = JsonRpcVersion,
+			["id"] = idNode,
+			["result"] = await HandleFormattingAsync(root, documents, range: null)
+		};
+		await SendAsync(response);
+		continue;
+	}
+
+	if (method == "textDocument/rangeFormatting")
+	{
+		var response = new JsonObject
+		{
+			["jsonrpc"] = JsonRpcVersion,
+			["id"] = idNode,
+			["result"] = await HandleFormattingAsync(root, documents, range: TryReadFormattingRange(root))
+		};
+		await SendAsync(response);
+		continue;
+	}
+
+	if (method == "textDocument/selectionRange")
+	{
+		var response = new JsonObject
+		{
+			["jsonrpc"] = JsonRpcVersion,
+			["id"] = idNode,
+			["result"] = await HandleSelectionRangeAsync(root, documents)
+		};
+		await SendAsync(response);
+		continue;
+	}
+
+	if (method == "textDocument/documentLink")
+	{
+		var response = new JsonObject
+		{
+			["jsonrpc"] = JsonRpcVersion,
+			["id"] = idNode,
+			["result"] = await HandleDocumentLinkAsync(root, documents)
+		};
+		await SendAsync(response);
+		continue;
+	}
+
+	if (method == "textDocument/prepareTypeHierarchy")
+	{
+		var response = new JsonObject
+		{
+			["jsonrpc"] = JsonRpcVersion,
+			["id"] = idNode,
+			["result"] = await HandlePrepareTypeHierarchyAsync(root, documents)
+		};
+		await SendAsync(response);
+		continue;
+	}
+
+	if (method == "typeHierarchy/supertypes")
+	{
+		var response = new JsonObject
+		{
+			["jsonrpc"] = JsonRpcVersion,
+			["id"] = idNode,
+			["result"] = await HandleTypeHierarchySupertypesAsync(root)
+		};
+		await SendAsync(response);
+		continue;
+	}
+
+	if (method == "typeHierarchy/subtypes")
+	{
+		var response = new JsonObject
+		{
+			["jsonrpc"] = JsonRpcVersion,
+			["id"] = idNode,
+			["result"] = await HandleTypeHierarchySubtypesAsync(root)
 		};
 		await SendAsync(response);
 		continue;
@@ -3584,6 +3674,437 @@ static int SymbolToLspKind(ISymbol sym) => sym switch{
 	INamespaceSymbol                                      => 3,
 	_                                                     => 13
 };
+
+// ─── Formatting ───────────────────────────────────────────────────────────────
+async Task<JsonNode> HandleFormattingAsync(JsonElement requestRoot, ConcurrentDictionary<string, string> documents, (int startLine, int startChar, int endLine, int endChar)? range)
+{
+	var empty = new JsonArray();
+	await EnsureRoslynWorkspaceLoadedAsync(forceReload: false);
+	if (roslynSolution is null || !TryReadUri(requestRoot, out var uri) || !TryGetFilePathFromUri(uri, out var filePath))
+		return empty;
+
+	var docId = roslynSolution.GetDocumentIdsWithFilePath(filePath).FirstOrDefault();
+	var roslynDoc = docId is not null ? roslynSolution.GetDocument(docId) : null;
+	if (roslynDoc is null) return empty;
+
+	if (documents.TryGetValue(uri, out var liveText))
+		roslynDoc = roslynDoc.WithText(SourceText.From(liveText, Encoding.UTF8));
+
+	try
+	{
+		var oldText = await roslynDoc.GetTextAsync();
+		Document formattedDoc;
+		if (range is not null)
+		{
+			var r = range.Value;
+			var safeEndLine = Math.Clamp(r.endLine, 0, oldText.Lines.Count - 1);
+			var safeEndChar = Math.Clamp(r.endChar, 0, oldText.Lines[safeEndLine].Span.Length);
+			var spanStart = oldText.Lines.GetPosition(new LinePosition(Math.Clamp(r.startLine, 0, oldText.Lines.Count - 1), r.startChar));
+			var spanEnd   = oldText.Lines.GetPosition(new LinePosition(safeEndLine, safeEndChar));
+			formattedDoc = await Formatter.FormatAsync(roslynDoc, TextSpan.FromBounds(spanStart, spanEnd));
+		}
+		else
+		{
+			formattedDoc = await Formatter.FormatAsync(roslynDoc);
+		}
+
+		var newText = await formattedDoc.GetTextAsync();
+		var changes = newText.GetTextChanges(oldText);
+
+		var edits = new JsonArray();
+		foreach (var change in changes)
+		{
+			var startPos = oldText.Lines.GetLinePosition(change.Span.Start);
+			var endPos   = oldText.Lines.GetLinePosition(change.Span.End);
+			edits.Add(new JsonObject
+			{
+				["range"]   = CreateRange(startPos.Line, startPos.Character, endPos.Line, endPos.Character),
+				["newText"] = change.NewText ?? string.Empty
+			});
+		}
+		return edits;
+	}
+	catch (Exception ex)
+	{
+		await LogAsync($"Formatting failed: {ex.Message}", 2);
+		return empty;
+	}
+}
+
+static (int startLine, int startChar, int endLine, int endChar)? TryReadFormattingRange(JsonElement requestRoot)
+{
+	if (!requestRoot.TryGetProperty("params", out var p)) return null;
+	if (!p.TryGetProperty("range", out var r)) return null;
+	if (!r.TryGetProperty("start", out var s) || !r.TryGetProperty("end", out var e)) return null;
+	return (
+		s.TryGetProperty("line", out var sl) ? sl.GetInt32() : 0,
+		s.TryGetProperty("character", out var sc) ? sc.GetInt32() : 0,
+		e.TryGetProperty("line", out var el) ? el.GetInt32() : 0,
+		e.TryGetProperty("character", out var ec) ? ec.GetInt32() : 0
+	);
+}
+
+// ─── Selection Ranges ─────────────────────────────────────────────────────────
+async Task<JsonNode> HandleSelectionRangeAsync(JsonElement requestRoot, ConcurrentDictionary<string, string> documents)
+{
+	var empty = new JsonArray();
+	await EnsureRoslynWorkspaceLoadedAsync(forceReload: false);
+	if (roslynSolution is null || !TryReadUri(requestRoot, out var uri) || !TryGetFilePathFromUri(uri, out var filePath))
+		return empty;
+
+	if (!requestRoot.TryGetProperty("params", out var pEl) || !pEl.TryGetProperty("positions", out var positionsEl))
+		return empty;
+
+	var docId = roslynSolution.GetDocumentIdsWithFilePath(filePath).FirstOrDefault();
+	var roslynDoc = docId is not null ? roslynSolution.GetDocument(docId) : null;
+	if (roslynDoc is null) return empty;
+
+	if (documents.TryGetValue(uri, out var liveText))
+		roslynDoc = roslynDoc.WithText(SourceText.From(liveText, Encoding.UTF8));
+
+	try
+	{
+		var syntaxRoot = await roslynDoc.GetSyntaxRootAsync();
+		var srcText    = await roslynDoc.GetTextAsync();
+		if (syntaxRoot is null) return empty;
+
+		var results = new JsonArray();
+		foreach (var pos in positionsEl.EnumerateArray())
+		{
+			var ln  = pos.TryGetProperty("line", out var lEl) ? lEl.GetInt32() : 0;
+			var ch  = pos.TryGetProperty("character", out var cEl) ? cEl.GetInt32() : 0;
+			var safeChar = Math.Clamp(ch, 0, srcText.Lines[Math.Clamp(ln, 0, srcText.Lines.Count - 1)].Span.Length);
+			var offset   = srcText.Lines.GetPosition(new LinePosition(Math.Clamp(ln, 0, srcText.Lines.Count - 1), safeChar));
+
+			var token = syntaxRoot.FindToken(Math.Clamp(offset, 0, Math.Max(0, syntaxRoot.FullSpan.End - 1)));
+			var node  = token.Parent;
+
+			// Collect ancestors innermost-first, then build SelectionRange chain outward.
+			// LSP requires each entry's `parent` to be WIDER than the entry itself.
+			var ancestors = new List<SyntaxNode>();
+			var cur = node;
+			while (cur is not null)
+			{
+				ancestors.Add(cur);
+				cur = cur.Parent;
+			}
+
+			// Build from outermost → innermost so each entry's parent is already the outer entry.
+			JsonObject? chain = null;
+			for (var i = ancestors.Count - 1; i >= 0; i--)
+			{
+				var span    = ancestors[i].Span;
+				var startLp = srcText.Lines.GetLinePosition(span.Start);
+				var endLp   = srcText.Lines.GetLinePosition(span.End);
+				var entry   = new JsonObject
+				{
+					["range"] = CreateRange(startLp.Line, startLp.Character, endLp.Line, endLp.Character)
+				};
+				if (chain is not null)
+					entry["parent"] = chain;  // chain is the broader (outer) parent
+				chain = entry;
+			}
+
+			results.Add(chain ?? new JsonObject { ["range"] = CreateRange(ln, ch, ln, ch) });
+		}
+		return results;
+	}
+	catch (Exception ex)
+	{
+		await LogAsync($"SelectionRange failed: {ex.Message}", 2);
+		return empty;
+	}
+}
+
+// ─── Document Links ───────────────────────────────────────────────────────────
+async Task<JsonNode> HandleDocumentLinkAsync(JsonElement requestRoot, ConcurrentDictionary<string, string> documents)
+{
+	var empty = new JsonArray();
+	if (!TryReadUri(requestRoot, out var uri)) return empty;
+
+	string? sourceText = null;
+	if (documents.TryGetValue(uri, out var liveText))
+	{
+		sourceText = liveText;
+	}
+	else
+	{
+		await EnsureRoslynWorkspaceLoadedAsync(forceReload: false);
+		if (roslynSolution is not null && TryGetFilePathFromUri(uri, out var fp))
+		{
+			var docId = roslynSolution.GetDocumentIdsWithFilePath(fp).FirstOrDefault();
+			var doc   = docId is not null ? roslynSolution.GetDocument(docId) : null;
+			if (doc is not null)
+				sourceText = (await doc.GetTextAsync()).ToString();
+		}
+	}
+
+	if (sourceText is null) return empty;
+
+	try
+	{
+		// Scan only comment trivia and string literals to avoid false positives.
+		Document? roslynDocForLinks = null;
+		await EnsureRoslynWorkspaceLoadedAsync(forceReload: false);
+		if (roslynSolution is not null && TryGetFilePathFromUri(uri, out var filePath2))
+		{
+			var docId2 = roslynSolution.GetDocumentIdsWithFilePath(filePath2).FirstOrDefault();
+			roslynDocForLinks = docId2 is not null ? roslynSolution.GetDocument(docId2) : null;
+			if (roslynDocForLinks is not null && documents.TryGetValue(uri, out var lt))
+				roslynDocForLinks = roslynDocForLinks.WithText(SourceText.From(lt, Encoding.UTF8));
+		}
+
+		var links   = new JsonArray();
+		var urlRegex = new Regex(@"https?://[^\s""'<>\)\]]+", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+		SourceText? src = null;
+		if (roslynDocForLinks is not null)
+		{
+			var root = await roslynDocForLinks.GetSyntaxRootAsync();
+			src = await roslynDocForLinks.GetTextAsync();
+			if (root is not null && src is not null)
+			{
+				var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+				// Walk trivia (comments) and string literals
+				foreach (var trivia in root.DescendantTrivia())
+				{
+					var trivText = trivia.ToString();
+					foreach (Match m in urlRegex.Matches(trivText))
+					{
+						var absoluteStart = trivia.FullSpan.Start + trivText.IndexOf(m.Value, StringComparison.Ordinal);
+						var startLp = src.Lines.GetLinePosition(absoluteStart);
+						var endLp   = src.Lines.GetLinePosition(absoluteStart + m.Length);
+						var key     = m.Value;
+						if (seen.Add(key))
+							links.Add(new JsonObject { ["range"] = CreateRange(startLp.Line, startLp.Character, endLp.Line, endLp.Character), ["target"] = m.Value });
+					}
+				}
+				foreach (var token in root.DescendantTokens())
+				{
+					var rawToken = token.ToString();
+					// Only inspect string-like tokens (starts with a quote char)
+					if (!rawToken.StartsWith("\"") && !rawToken.StartsWith("@\"") && !rawToken.StartsWith("$\"")) continue;
+					var tokInner = rawToken.Trim('"', '@', '$');
+					foreach (Match m in urlRegex.Matches(tokInner))
+					{
+						var innerOffset = rawToken.IndexOf(m.Value, StringComparison.Ordinal);
+						if (innerOffset < 0) continue;
+						var absoluteStart = token.SpanStart + innerOffset;
+						var startLp = src.Lines.GetLinePosition(absoluteStart);
+						var endLp   = src.Lines.GetLinePosition(absoluteStart + m.Length);
+						var key     = $"{startLp.Line}:{startLp.Character}";
+						if (seen.Add(key))
+							links.Add(new JsonObject { ["range"] = CreateRange(startLp.Line, startLp.Character, endLp.Line, endLp.Character), ["target"] = m.Value });
+					}
+				}
+				return links;
+			}
+		}
+
+		// Fallback: full text scan when Roslyn unavailable
+		var lines = SplitLines(sourceText);
+		for (var li = 0; li < lines.Count; li++)
+		{
+			foreach (Match m in urlRegex.Matches(lines[li]))
+				links.Add(new JsonObject { ["range"] = CreateRange(li, m.Index, li, m.Index + m.Length), ["target"] = m.Value });
+		}
+		return links;
+	}
+	catch (Exception ex)
+	{
+		await LogAsync($"DocumentLink failed: {ex.Message}", 2);
+		return empty;
+	}
+}
+
+// ─── Type Hierarchy ───────────────────────────────────────────────────────────
+async Task<JsonNode> HandlePrepareTypeHierarchyAsync(JsonElement requestRoot, ConcurrentDictionary<string, string> documents)
+{
+	var empty = new JsonArray();
+	var context = await TryResolveRoslynContextAsync(requestRoot);
+	if (context is null) return empty;
+
+	if (!TryReadPosition(requestRoot, out var uri, out _, out _)) return empty;
+	var document = context.Value.Document;
+	if (documents.TryGetValue(uri, out var liveText))
+		document = document.WithText(SourceText.From(liveText, Encoding.UTF8));
+
+	var symbol = await ResolveSymbolAtPositionAsync(document, context.Value.Position);
+	// Type hierarchy only applies to named types
+	if (symbol is not INamedTypeSymbol typeSymbol)
+	{
+		// If the symbol is a member, try the containing type
+		if (symbol?.ContainingType is INamedTypeSymbol containingType)
+			typeSymbol = containingType;
+		else
+			return empty;
+	}
+
+	var loc = typeSymbol.Locations.FirstOrDefault(l => l.IsInSource);
+	if (loc is null)
+	{
+		var srcDef = await SymbolFinder.FindSourceDefinitionAsync(typeSymbol, context.Value.Solution);
+		if (srcDef is not null) loc = srcDef.Locations.FirstOrDefault(l => l.IsInSource);
+		if (loc is null) return empty;
+	}
+
+	var lineSpan = loc.GetLineSpan();
+	var start    = lineSpan.StartLinePosition;
+	var end      = lineSpan.EndLinePosition;
+	var symUri   = new Uri(loc.SourceTree!.FilePath).AbsoluteUri;
+
+	var item = new JsonObject
+	{
+		["name"]           = typeSymbol.Name,
+		["kind"]           = SymbolToLspKind(typeSymbol),
+		["uri"]            = symUri,
+		["range"]          = CreateRange(start.Line, start.Character, end.Line, end.Character),
+		["selectionRange"] = CreateRange(start.Line, start.Character, start.Line, start.Character + typeSymbol.Name.Length),
+		["data"]           = new JsonObject { ["uri"] = symUri, ["line"] = start.Line, ["character"] = start.Character }
+	};
+
+	return new JsonArray { item };
+}
+
+async Task<JsonNode> HandleTypeHierarchySupertypesAsync(JsonElement requestRoot)
+{
+	var results = new JsonArray();
+	await EnsureRoslynWorkspaceLoadedAsync(forceReload: false);
+	if (roslynSolution is null) return results;
+
+	// Reuse same item.data structure as call hierarchy
+	if (!TryReadCallHierarchyItemData(requestRoot, out var fileUri, out var fileLine, out var fileChar)) return results;
+	if (!TryGetFilePathFromUri(fileUri, out var filePath)) return results;
+
+	var docId = roslynSolution.GetDocumentIdsWithFilePath(filePath).FirstOrDefault();
+	var roslynDoc = docId is not null ? roslynSolution.GetDocument(docId) : null;
+	if (roslynDoc is null) return results;
+
+	var docText  = await roslynDoc.GetTextAsync();
+	var safeChar = Math.Clamp(fileChar, 0, docText.Lines[fileLine].Span.Length);
+	var position = docText.Lines.GetPosition(new LinePosition(fileLine, safeChar));
+
+	var symbol = await ResolveSymbolAtPositionAsync(roslynDoc, position);
+	if (symbol is not INamedTypeSymbol typeSymbol) return results;
+
+	try
+	{
+		var supertypes = new List<INamedTypeSymbol>();
+
+		// Base class (excluding System.Object / System.ValueType / System.Enum etc.)
+		if (typeSymbol.BaseType is INamedTypeSymbol baseType &&
+		    baseType.SpecialType != SpecialType.System_Object &&
+		    baseType.SpecialType != SpecialType.System_ValueType &&
+		    baseType.SpecialType != SpecialType.System_Enum)
+		{
+			supertypes.Add(baseType);
+		}
+
+		// Implemented interfaces
+		supertypes.AddRange(typeSymbol.Interfaces);
+
+		foreach (var supertype in supertypes)
+		{
+			var loc = supertype.Locations.FirstOrDefault(l => l.IsInSource);
+			if (loc is null)
+			{
+				var srcDef = await SymbolFinder.FindSourceDefinitionAsync(supertype, roslynSolution);
+				if (srcDef is not null) loc = srcDef.Locations.FirstOrDefault(l => l.IsInSource);
+			}
+			if (loc is null) continue;
+
+			var lineSpan = loc.GetLineSpan();
+			var s        = lineSpan.StartLinePosition;
+			var e        = lineSpan.EndLinePosition;
+			var sUri     = new Uri(loc.SourceTree!.FilePath).AbsoluteUri;
+
+			results.Add(new JsonObject
+			{
+				["name"]           = supertype.Name,
+				["kind"]           = SymbolToLspKind(supertype),
+				["uri"]            = sUri,
+				["range"]          = CreateRange(s.Line, s.Character, e.Line, e.Character),
+				["selectionRange"] = CreateRange(s.Line, s.Character, s.Line, s.Character + supertype.Name.Length),
+				["data"]           = new JsonObject { ["uri"] = sUri, ["line"] = s.Line, ["character"] = s.Character }
+			});
+		}
+	}
+	catch (Exception ex)
+	{
+		await LogAsync($"TypeHierarchy supertypes failed: {ex.Message}", 2);
+	}
+
+	return results;
+}
+
+async Task<JsonNode> HandleTypeHierarchySubtypesAsync(JsonElement requestRoot)
+{
+	var results = new JsonArray();
+	await EnsureRoslynWorkspaceLoadedAsync(forceReload: false);
+	if (roslynSolution is null) return results;
+
+	if (!TryReadCallHierarchyItemData(requestRoot, out var fileUri, out var fileLine, out var fileChar)) return results;
+	if (!TryGetFilePathFromUri(fileUri, out var filePath)) return results;
+
+	var docId = roslynSolution.GetDocumentIdsWithFilePath(filePath).FirstOrDefault();
+	var roslynDoc = docId is not null ? roslynSolution.GetDocument(docId) : null;
+	if (roslynDoc is null) return results;
+
+	var docText  = await roslynDoc.GetTextAsync();
+	var safeChar = Math.Clamp(fileChar, 0, docText.Lines[fileLine].Span.Length);
+	var position = docText.Lines.GetPosition(new LinePosition(fileLine, safeChar));
+
+	var symbol = await ResolveSymbolAtPositionAsync(roslynDoc, position);
+	if (symbol is not INamedTypeSymbol typeSymbol) return results;
+
+	try
+	{
+		var subtypes = new List<INamedTypeSymbol>();
+
+		if (typeSymbol.TypeKind == TypeKind.Interface)
+		{
+			// Implementations of the interface
+			var impls = await SymbolFinder.FindImplementationsAsync(typeSymbol, roslynSolution);
+			subtypes.AddRange(impls.OfType<INamedTypeSymbol>());
+		}
+		else
+		{
+			// Direct subclasses (not transitive)
+			var derived = await SymbolFinder.FindDerivedClassesAsync(typeSymbol, roslynSolution, transitive: false);
+			subtypes.AddRange(derived);
+		}
+
+		var capped = false;
+		foreach (var subtype in subtypes)
+		{
+			if (capped) break;
+			var loc = subtype.Locations.FirstOrDefault(l => l.IsInSource);
+			if (loc is null) continue;
+
+			var lineSpan = loc.GetLineSpan();
+			var s        = lineSpan.StartLinePosition;
+			var e        = lineSpan.EndLinePosition;
+			var sUri     = new Uri(loc.SourceTree!.FilePath).AbsoluteUri;
+
+			results.Add(new JsonObject
+			{
+				["name"]           = subtype.Name,
+				["kind"]           = SymbolToLspKind(subtype),
+				["uri"]            = sUri,
+				["range"]          = CreateRange(s.Line, s.Character, e.Line, e.Character),
+				["selectionRange"] = CreateRange(s.Line, s.Character, s.Line, s.Character + subtype.Name.Length),
+				["data"]           = new JsonObject { ["uri"] = sUri, ["line"] = s.Line, ["character"] = s.Character }
+			});
+			if (results.Count >= 200) capped = true;
+		}
+	}
+	catch (Exception ex)
+	{
+		await LogAsync($"TypeHierarchy subtypes failed: {ex.Message}", 2);
+	}
+
+	return results;
+}
 
 static async Task WriteMessageAsync(Stream output, JsonObject message)
 {

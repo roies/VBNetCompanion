@@ -8,6 +8,17 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.21] - 2026-02-28
+
+### Added
+
+- **Document formatting** (`textDocument/formatting`, `textDocument/rangeFormatting`): Format Document and Format Selection now work for VB.NET and C# files via Roslyn's `Formatter.FormatAsync`. Changes are returned as minimal `TextEdit` diffs using `SourceText.GetTextChanges`.
+- **Selection ranges** (`textDocument/selectionRange`): `Shift+Alt+→` (Expand Selection) now walks from the innermost syntax node to the file root through Roslyn's `SyntaxNode` ancestor chain, enabling incremental structural selection.
+- **Document links** (`textDocument/documentLink`): URLs (`https://` and `http://`) in comments and string literals are surfaced as clickable links in the editor. Scanned via Roslyn trivia and string token walks; falls back to full-text regex scan when Roslyn is unavailable.
+- **Type hierarchy** (`textDocument/prepareTypeHierarchy`, `typeHierarchy/supertypes`, `typeHierarchy/subtypes`): right-click a type → Show Type Hierarchy. Supertypes shows the base class (excluding `System.Object`) and implemented interfaces; subtypes uses `SymbolFinder.FindDerivedClassesAsync` / `FindImplementationsAsync` to discover subclasses and implementations across the whole solution (capped at 200).
+- **VB.NET debug configuration** (`vbnet` debug type): contributes `Launch (VB.NET)` and `Attach (VB.NET)` configuration snippets. The `vbnet` type is rewritten to `coreclr` at resolve time so the C# extension's DAP adapter handles execution — no extra binary required.
+- **Cross-platform support**: removed the `"os": ["win32"]` restriction. The extension now installs on Linux and macOS. The bundled Roslyn server `.dll` is launched via `dotnet <dll>` on non-Windows. Platform-specific publish paths (`publish/linux-x64`, `publish/osx-arm64`) are resolved first when present. Added `build:server:linux`, `build:server:osx`, and `build:server:all` npm scripts for producing platform-targeted builds.
+
 ## [0.1.20] - 2026-02-28
 
 ### Fixed
