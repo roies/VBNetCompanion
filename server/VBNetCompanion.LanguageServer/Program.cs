@@ -80,12 +80,16 @@ while (true)
 		? null
 		: JsonNode.Parse(idElement.GetRawText());
 
+	try
+	{
 	if (method == "initialize")
 	{
 		if (TryReadInitializeWorkspacePath(root, out var resolvedWorkspacePath))
 		{
 			workspaceRootPath = resolvedWorkspacePath;
-			await EnsureRoslynWorkspaceLoadedAsync(forceReload: true);
+			// Kick off workspace loading in the background so the initialize response
+			// is returned immediately and the client doesn't time out waiting for it.
+			_ = Task.Run(() => EnsureRoslynWorkspaceLoadedAsync(forceReload: true));
 		}
 
 		var response = new JsonObject
@@ -520,6 +524,35 @@ while (true)
 			}
 		};
 		await SendAsync(response);
+	}
+	} // end try
+	catch (Exception loopEx)
+	{
+		// Log to stderr so the crash is visible in the VS Code output channel even if stdout is broken.
+		await Console.Error.WriteLineAsync($"[VBNetCompanion.LanguageServer] Unhandled exception in dispatch loop for '{method}': {loopEx}");
+		try
+		{
+			await LogAsync($"Unhandled exception dispatching '{method}': {loopEx.Message}", 1);
+			// If the message had an id, reply with a JSON-RPC error so the client doesn't hang.
+			if (idNode is not null)
+			{
+				var errResponse = new JsonObject
+				{
+					["jsonrpc"] = JsonRpcVersion,
+					["id"] = idNode,
+					["error"] = new JsonObject
+					{
+						["code"] = -32603,
+						["message"] = $"Internal server error: {loopEx.Message}"
+					}
+				};
+				await SendAsync(errResponse);
+			}
+		}
+		catch
+		{
+			// If we can't even log, keep going; don't crash the process.
+		}
 	}
 }
 
@@ -2614,7 +2647,7 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 	{
 		roslynWorkspace = null;
 		roslynSolution = null;
-		await LogAsync($"Roslyn workspace load failed: {ex}", 1);
+		try { await LogAsync($"Roslyn workspace load failed: {ex}", 1); } catch { /* pipe may be broken; don't crash */ }
 	}
 	finally
 	{

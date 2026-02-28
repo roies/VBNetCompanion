@@ -8,6 +8,15 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.22] - 2026-02-28
+
+### Fixed
+
+- **Server crash on startup (exit code 1)**: workspace loading was blocking the `initialize` response. If loading took long enough for the client to time out, the client closed the connection; any subsequent `LogAsync` / `SendAsync` call then threw `IOException`, which escaped `EnsureRoslynWorkspaceLoadedAsync`'s catch block and crashed the process. Fixed by:
+  1. Sending the `initialize` response immediately and loading the Roslyn workspace in a background `Task.Run`.
+  2. Wrapping the `LogAsync` call inside `EnsureRoslynWorkspaceLoadedAsync`'s catch block with its own try-catch so a broken pipe cannot propagate.
+  3. Wrapping the entire dispatch loop body in a top-level try-catch so any future unhandled exception logs to stderr and replies with a JSON-RPC error instead of crashing the server process.
+
 ## [0.1.21] - 2026-02-28
 
 ### Added
