@@ -1306,20 +1306,36 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 		await LogAsync($"Loading {projectPaths.Count} project(s): {string.Join(", ", projectPaths.Select(Path.GetFileName))}");
 		foreach (var projectPath in projectPaths)
 		{
+			// Skip projects already loaded as transitive dependencies of a previously opened project.
+			var normalizedPath = Path.GetFullPath(projectPath);
+			var alreadyLoaded = workspace.CurrentSolution.Projects
+				.Any(p => string.Equals(p.FilePath, normalizedPath, StringComparison.OrdinalIgnoreCase));
+			if (alreadyLoaded)
+			{
+				await LogAsync($"Skipping (already loaded as transitive dep): {Path.GetFileName(projectPath)}");
+				roslynSolution = workspace.CurrentSolution;
+				continue;
+			}
+
 			try
 			{
 				await LogAsync($"Opening project: {projectPath}");
-				var project = await workspace.OpenProjectAsync(projectPath);
-				roslynSolution = project.Solution;
-				await LogAsync($"Opened project: {Path.GetFileName(projectPath)} ({project.Documents.Count()} docs)");
+				await workspace.OpenProjectAsync(projectPath);
+				// Always take the full workspace solution — it includes all transitively loaded projects.
+				roslynSolution = workspace.CurrentSolution;
+				var loadedProject = roslynSolution.Projects
+					.FirstOrDefault(p => string.Equals(p.FilePath, normalizedPath, StringComparison.OrdinalIgnoreCase));
+				await LogAsync($"Opened project: {Path.GetFileName(projectPath)} ({loadedProject?.Documents.Count() ?? 0} docs)");
 			}
 			catch (Exception ex)
 			{
-				await LogAsync($"OpenProjectAsync failed for {Path.GetFileName(projectPath)}: {ex}", 1);
+				await LogAsync($"OpenProjectAsync failed for {Path.GetFileName(projectPath)}: {ex.Message}", 1);
 			}
 		}
 
 		roslynWorkspace = workspace;
+		// Final sync — ensures roslynSolution reflects all projects including transitive ones.
+		roslynSolution = workspace.CurrentSolution;
 		foreach (var f in workspaceFailures) await LogAsync($"WorkspaceDiag: {f}", 2);
 		await LogAsync($"Roslyn projects loaded: {roslynSolution?.Projects.Count() ?? 0} project(s)");
 	}

@@ -8,6 +8,13 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.3] - 2026-02-28
+
+### Fixed
+
+- **Duplicate project load errors on `.slnx` workspaces**: `OpenProjectAsync` automatically loads transitive project references. Subsequent attempts to open those same projects explicitly threw `'X' is already part of the workspace`. Projects now check `workspace.CurrentSolution` before opening and skip any already loaded as transitive dependencies.
+- **`roslynSolution` missing transitively-loaded projects**: solution is now always synced from `workspace.CurrentSolution` (which includes all transitive loads) rather than from the individual `project.Solution` returned per open call.
+
 ## [0.1.2] - 2026-02-28
 
 ### Fixed
