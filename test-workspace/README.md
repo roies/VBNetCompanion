@@ -10,8 +10,8 @@ Files:
 - `VbConsumer/`
 
 Use this folder in an Extension Development Host window to run:
-- `VSExtensionForVB: Show .NET Language Parity Status`
-- `VSExtensionForVB: Remediate VB.NET Parity Gaps`
+- `VB.NET Companion: Show .NET Language Parity Status`
+- `VB.NET Companion: Remediate VB.NET Parity Gaps`
 
 ## Cross-project C# ↔ VB check
 
