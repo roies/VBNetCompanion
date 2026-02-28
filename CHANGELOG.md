@@ -8,6 +8,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.18] - 2026-02-28
+
+### Changed
+
+- Expanded Marketplace keyword tags: added `vbnet`, `vb`, `basic`, `dotnet`, `c#`, `lsp`, `completions`, `hover`, `go to definition`, `find references`, `rename`, `inlay hints`, `call hierarchy`, `code actions`, `codelens`, `mixed language`, `cross-language`, `solution`.
+
 ## [0.1.17] - 2026-02-28
 
 ### Changed
