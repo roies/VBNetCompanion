@@ -1,5 +1,7 @@
 {
-    "vbnetcompanion.enableLanguageClientBridge": true,
+    "vbnetcompanion.enableForCSharp": true,
+    "vbnetcompanion.enableForVisualBasic": true,
+    "vbnetcompanion.enableLanguageClientBridge": false,
     "vbnetcompanion.languageClientServerCommand": "<path-to>/VBNetCompanion.LanguageServer.exe",
     "vbnetcompanion.languageClientServerArgs": [
         "--stdio"
