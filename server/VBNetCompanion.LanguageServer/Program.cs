@@ -781,7 +781,6 @@ async Task<JsonNode> HandleSemanticTokensAsync(JsonElement requestRoot, Concurre
 			prevChar = startChar;
 		}
 
-		await LogAsync($"SemanticTokens: {data.Count / 5} tokens for {Path.GetFileName(filePath)}");
 		return new JsonObject { ["data"] = data };
 	}
 	catch (Exception ex)
@@ -814,13 +813,7 @@ async Task<JsonNode?> HandleHoverAsync(JsonElement requestRoot, ConcurrentDictio
 	}
 
 	var symbol = await ResolveSymbolAtPositionAsync(doc, position);
-	if (symbol is null)
-	{
-		await LogAsync("Hover: no symbol at position");
-		return null;
-	}
-
-	await LogAsync($"Hover: symbol '{symbol.Name}' ({symbol.Kind})");
+	if (symbol is null) return null;
 	var sb = new StringBuilder();
 	var display = symbol.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat);
 	sb.AppendLine("```vb");
@@ -985,7 +978,6 @@ async Task<JsonNode> HandleDocumentSymbolAsync(JsonElement requestRoot, Concurre
 			});
 		}
 
-		await LogAsync($"DocumentSymbol: {symbols.Count} symbols in {Path.GetFileName(filePath)}");
 		return symbols;
 	}
 	catch (Exception ex)
@@ -1035,7 +1027,6 @@ async Task<JsonNode?> HandleDocumentHighlightAsync(JsonElement requestRoot, Conc
 		}
 	}
 
-	await LogAsync($"DocumentHighlight: {highlights.Count} highlights");
 	return highlights;
 }
 
@@ -1084,7 +1075,6 @@ async Task<JsonNode?> HandleSignatureHelpAsync(JsonElement requestRoot, Concurre
 
 		// Resolve the symbol at the position just before '('.
 		var symPosition = Math.Max(0, callPos - 1);
-		await LogAsync($"SignatureHelp: callPos={callPos} activeParam={activeParam} symPosition={symPosition}");
 		var symbol = await ResolveSymbolAtPositionAsync(roslynDoc, symPosition);
 
 		IEnumerable<IMethodSymbol> methods = symbol switch
@@ -1166,11 +1156,7 @@ async Task<JsonNode?> HandleRenameAsync(JsonElement requestRoot, ConcurrentDicti
 	}
 
 	var symbol = await ResolveSymbolAtPositionAsync(doc, context.Value.Position);
-	if (symbol is null)
-	{
-		await LogAsync("Rename: no symbol at position");
-		return null;
-	}
+	if (symbol is null) return null;
 
 	await LogAsync($"Rename: renaming '{symbol.Name}' → '{newName}'");
 
@@ -1293,7 +1279,6 @@ async Task<JsonNode> HandleFoldingRangeAsync(JsonElement requestRoot, Concurrent
 			ranges.Add(entry);
 		}
 
-		await LogAsync($"FoldingRange: {ranges.Count} ranges for {Path.GetFileName(filePath)}");
 		return ranges;
 	}
 	catch (Exception ex)
@@ -1320,13 +1305,7 @@ async Task<JsonNode> HandleImplementationAsync(JsonElement requestRoot, Concurre
 	}
 
 	var symbol = await ResolveSymbolAtPositionAsync(doc, context.Value.Position);
-	if (symbol is null)
-	{
-		await LogAsync("Implementation: no symbol at position");
-		return empty;
-	}
-
-	await LogAsync($"Implementation: finding implementations of '{symbol.Name}' ({symbol.Kind})");
+	if (symbol is null) return empty;
 
 	var locations = new JsonArray();
 	var seen      = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1383,7 +1362,6 @@ async Task<JsonNode> HandleImplementationAsync(JsonElement requestRoot, Concurre
 		}
 	}
 
-	await LogAsync($"Implementation: {locations.Count} location(s) found");
 	return locations;
 }
 
@@ -1467,7 +1445,7 @@ async Task<JsonNode> HandleCompletionAsync(JsonElement requestRoot, ConcurrentDi
 
 					if (items.Count > 0)
 					{
-						await LogAsync($"Completion: Roslyn returned {items.Count} items (memberAccess={isMemberAccess})");
+
 						return new JsonObject { ["isIncomplete"] = false, ["items"] = items };
 					}
 				}
@@ -1608,11 +1586,6 @@ async Task<JsonNode> HandleCodeLensAsync(JsonElement requestRoot, ConcurrentDict
 	{
 		var docId = roslynSolution.GetDocumentIdsWithFilePath(codeLensFilePath).FirstOrDefault();
 		roslynDoc = docId is not null ? roslynSolution.GetDocument(docId) : null;
-		await LogAsync($"CodeLens: solution={roslynSolution.Projects.Count()}p, file={codeLensFilePath}, roslynDoc={roslynDoc?.Name ?? "null"}");
-	}
-	else
-	{
-		await LogAsync($"CodeLens: roslynSolution={(roslynSolution is null ? "null" : "loaded")}, uri={uri}", 2);
 	}
 
 	if (!documents.TryGetValue(uri, out var sourceText))
@@ -1662,7 +1635,6 @@ async Task<JsonNode> HandleCodeLensAsync(JsonElement requestRoot, ConcurrentDict
 					}
 				}
 
-				await LogAsync($"CodeLens Roslyn: '{symbol.Name}' → {refCount} ref(s) via {symbol.Kind}");
 				var title = refCount == 1 ? "1 reference" : $"{refCount} references";
 				roslynLenses.Add(new JsonObject
 				{
@@ -3087,8 +3059,7 @@ async Task<JsonNode> HandleInlayHintAsync(JsonElement requestRoot, ConcurrentDic
 			}
 		}
 
-		await LogAsync($"InlayHint: {hints.Count} hints for {Path.GetFileName(filePath)}");
-	}
+		}
 	catch (Exception ex)
 	{
 		await LogAsync($"InlayHint failed: {ex.Message}", 2);
@@ -3135,7 +3106,6 @@ async Task<JsonNode> HandleWorkspaceSymbolAsync(JsonElement requestRoot)
 				if (results.Count >= 200) { capped = true; break; }
 			}
 		}
-		await LogAsync($"WorkspaceSymbol: {results.Count} result(s) for '{query}'");
 	}
 	catch (Exception ex)
 	{
@@ -3183,7 +3153,6 @@ async Task<JsonNode> HandlePrepareCallHierarchyAsync(JsonElement requestRoot, Co
 		["data"]           = new JsonObject { ["uri"] = symUri, ["line"] = start.Line, ["character"] = start.Character }
 	};
 
-	await LogAsync($"PrepareCallHierarchy: '{symbol.Name}' ({symbol.Kind})");
 	return new JsonArray { item };
 }
 
@@ -3207,7 +3176,7 @@ async Task<JsonNode> HandleIncomingCallsAsync(JsonElement requestRoot)
 	var symbol = await ResolveSymbolAtPositionAsync(roslynDoc, position);
 	if (symbol is null) return results;
 
-	await LogAsync($"IncomingCalls: finding callers of '{symbol.Name}'");
+
 	try
 	{
 		var refs        = await SymbolFinder.FindReferencesAsync(symbol, roslynSolution);
@@ -3262,7 +3231,6 @@ async Task<JsonNode> HandleIncomingCallsAsync(JsonElement requestRoot)
 		foreach (var (callerItem, ranges) in byContainer.Values)
 			results.Add(new JsonObject { ["from"] = callerItem, ["fromRanges"] = ranges });
 
-		await LogAsync($"IncomingCalls: {results.Count} caller(s) for '{symbol.Name}'");
 	}
 	catch (Exception ex)
 	{
@@ -3292,7 +3260,7 @@ async Task<JsonNode> HandleOutgoingCallsAsync(JsonElement requestRoot)
 	var symbol = await ResolveSymbolAtPositionAsync(roslynDoc, position);
 	if (symbol is null) return results;
 
-	await LogAsync($"OutgoingCalls: finding callees from '{symbol.Name}'");
+
 	try
 	{
 		var syntaxRoot    = await roslynDoc.GetSyntaxRootAsync();
@@ -3364,7 +3332,6 @@ async Task<JsonNode> HandleOutgoingCallsAsync(JsonElement requestRoot)
 		foreach (var (calleeItem, ranges) in calleeToRanges.Values)
 			results.Add(new JsonObject { ["to"] = calleeItem, ["fromRanges"] = ranges });
 
-		await LogAsync($"OutgoingCalls: {results.Count} callee(s) from '{symbol.Name}'");
 	}
 	catch (Exception ex)
 	{
@@ -3539,7 +3506,7 @@ async Task<JsonNode> HandleCodeActionAsync(JsonElement requestRoot, ConcurrentDi
 			}
 		}
 
-		await LogAsync($"CodeAction: {actions.Count} action(s) for {Path.GetFileName(filePath)}:{startLine}");
+	
 	}
 	catch (Exception ex)
 	{

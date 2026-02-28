@@ -8,6 +8,13 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.19] - 2026-03-01
+
+### Changed
+
+- Reduced log verbosity: removed all per-request success logs (SemanticTokens, Hover, Completion, CodeLens per-symbol, DocumentHighlight, SignatureHelp, FoldingRange, InlayHint, WorkspaceSymbol, CallHierarchy, etc.). Only errors, warnings, workspace loading, diagnostics summary, and intentional user actions (rename) are logged.
+- Removed background popup notifications for auto-bootstrap and bridge restart actions; these are now silent (logged to output channel only).
+
 ## [0.1.18] - 2026-02-28
 
 ### Changed

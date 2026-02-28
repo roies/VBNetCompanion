@@ -112,7 +112,6 @@ export function activate(context: vscode.ExtensionContext) {
 		for (const command of candidates) {
 			try {
 				await vscode.commands.executeCommand(command);
-				void vscode.window.showInformationMessage(`Executed language-service restart via command: ${command}`);
 				return;
 			} catch {
 				continue;
@@ -129,7 +128,6 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 
 		await languageClientBridge.restartFromConfiguration();
-		void vscode.window.showInformationMessage('Language client bridge restarted from current settings.');
 	});
 
 	const applyRoslynBridgePresetCommand = vscode.commands.registerCommand('vbnetcompanion.applyRoslynBridgePreset', async () => {
@@ -482,7 +480,6 @@ async function autoBootstrapRoslynBridge(context: vscode.ExtensionContext, outpu
 		await context.globalState.update(ROSLYN_BRIDGE_BOOTSTRAP_KEY, true);
 
 		outputChannel.appendLine(`[Bridge] Applied companion VB bridge profile: ${companionServerLaunch.description}`);
-		void vscode.window.showInformationMessage('VB.NET Companion automatically enabled VB bridge support.');
 		return;
 	}
 
@@ -514,7 +511,7 @@ async function autoBootstrapRoslynBridge(context: vscode.ExtensionContext, outpu
 	await context.globalState.update(ROSLYN_BRIDGE_BOOTSTRAP_KEY, true);
 
 	outputChannel.appendLine(`[Bridge] Automatically configured Roslyn bridge with: ${detectedServerCommand}`);
-	void vscode.window.showInformationMessage('VB.NET Companion auto-configured bridge settings.');
+
 }
 
 function detectRoslynServerCommandPath(): string | undefined {
