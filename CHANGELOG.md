@@ -8,6 +8,16 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.9] - 2026-02-28
+
+### Added
+
+- **Hover documentation** (`textDocument/hover`): hovering over any symbol shows its type signature in a code fence, plus XML doc `<summary>` text and `<param>` descriptions rendered as Markdown.
+- **Push diagnostics** (`textDocument/publishDiagnostics`): compiler errors and warnings from Roslyn are pushed to the editor whenever a file is opened or changed.
+- **Document symbols** (`textDocument/documentSymbol`): the Outline panel and breadcrumbs now list all classes, methods, properties, fields, enums, and other declared symbols in the current VB.NET or C# file.
+- **Document highlights** (`textDocument/documentHighlight`): pressing or clicking a symbol highlights all other occurrences of that symbol in the same file via Roslyn `SymbolFinder.FindReferencesAsync`.
+- **Signature help** (`textDocument/signatureHelp`): typing `(` or `,` shows the parameter list for the active method or constructor overload, including the active parameter and XML doc summary.
+
 ## [0.1.8] - 2026-02-28
 
 ### Added

@@ -105,6 +105,13 @@ while (true)
 						}
 					}
 				},
+				["hoverProvider"] = true,
+				["documentSymbolProvider"] = true,
+				["documentHighlightProvider"] = true,
+				["signatureHelpProvider"] = new JsonObject
+				{
+					["triggerCharacters"] = new JsonArray("(", ",")
+				},
 				["serverInfo"] = new JsonObject
 				{
 					["name"] = "VBNetCompanion.LanguageServer",
@@ -145,6 +152,7 @@ while (true)
 		{
 			documents[uri] = text;
 			await UpdateRoslynDocumentTextAsync(uri, text);
+			_ = Task.Run(() => PushDiagnosticsAsync(uri));
 		}
 		continue;
 	}
@@ -155,6 +163,7 @@ while (true)
 		{
 			documents[uri] = text;
 			await UpdateRoslynDocumentTextAsync(uri, text);
+			_ = Task.Run(() => PushDiagnosticsAsync(uri));
 		}
 		continue;
 	}
@@ -223,6 +232,54 @@ while (true)
 			["jsonrpc"] = JsonRpcVersion,
 			["id"] = idNode,
 			["result"] = await HandleSemanticTokensAsync(root, documents)
+		};
+		await WriteMessageAsync(standardOutput, response);
+		continue;
+	}
+
+	if (method == "textDocument/hover")
+	{
+		var response = new JsonObject
+		{
+			["jsonrpc"] = JsonRpcVersion,
+			["id"] = idNode,
+			["result"] = await HandleHoverAsync(root, documents)
+		};
+		await WriteMessageAsync(standardOutput, response);
+		continue;
+	}
+
+	if (method == "textDocument/documentSymbol")
+	{
+		var response = new JsonObject
+		{
+			["jsonrpc"] = JsonRpcVersion,
+			["id"] = idNode,
+			["result"] = await HandleDocumentSymbolAsync(root, documents)
+		};
+		await WriteMessageAsync(standardOutput, response);
+		continue;
+	}
+
+	if (method == "textDocument/documentHighlight")
+	{
+		var response = new JsonObject
+		{
+			["jsonrpc"] = JsonRpcVersion,
+			["id"] = idNode,
+			["result"] = await HandleDocumentHighlightAsync(root, documents)
+		};
+		await WriteMessageAsync(standardOutput, response);
+		continue;
+	}
+
+	if (method == "textDocument/signatureHelp")
+	{
+		var response = new JsonObject
+		{
+			["jsonrpc"] = JsonRpcVersion,
+			["id"] = idNode,
+			["result"] = await HandleSignatureHelpAsync(root, documents)
 		};
 		await WriteMessageAsync(standardOutput, response);
 		continue;
@@ -599,6 +656,342 @@ async Task<JsonNode> HandleSemanticTokensAsync(JsonElement requestRoot, Concurre
 	{
 		await LogAsync($"SemanticTokens failed: {ex.Message}", 2);
 		return empty;
+	}
+}
+
+// ─── Hover ───────────────────────────────────────────────────────────────────
+async Task<JsonNode?> HandleHoverAsync(JsonElement requestRoot, ConcurrentDictionary<string, string> documents)
+{
+	var context = await TryResolveRoslynContextAsync(requestRoot);
+	if (context is null) return null;
+
+	var doc = context.Value.Document;
+	if (TryReadUri(requestRoot, out var hoverUri) && documents.TryGetValue(hoverUri, out var liveText))
+		doc = doc.WithText(SourceText.From(liveText, Encoding.UTF8));
+
+	var symbol = await ResolveSymbolAtPositionAsync(doc, context.Value.Position);
+	if (symbol is null) return null;
+
+	var sb = new StringBuilder();
+	var display = symbol.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat);
+	sb.AppendLine("```");
+	sb.AppendLine(display);
+	sb.AppendLine("```");
+
+	try
+	{
+		var xml = symbol.GetDocumentationCommentXml();
+		if (!string.IsNullOrWhiteSpace(xml))
+		{
+			var xdoc = XDocument.Parse(xml);
+			var summary = xdoc.Descendants("summary").FirstOrDefault()?.Value?.Trim();
+			if (!string.IsNullOrEmpty(summary))
+			{
+				sb.AppendLine();
+				sb.AppendLine(summary);
+			}
+			foreach (var param in xdoc.Descendants("param"))
+			{
+				var name = param.Attribute("name")?.Value;
+				var desc = param.Value.Trim();
+				if (!string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(desc))
+					sb.AppendLine($"\n*{name}*: {desc}");
+			}
+		}
+	}
+	catch { /* XML parse failure is non-fatal */ }
+
+	return new JsonObject
+	{
+		["contents"] = new JsonObject
+		{
+			["kind"] = "markdown",
+			["value"] = sb.ToString().Trim()
+		}
+	};
+}
+
+// ─── Diagnostics (push notification) ─────────────────────────────────────────
+async Task PushDiagnosticsAsync(string uri)
+{
+	try
+	{
+		await EnsureRoslynWorkspaceLoadedAsync(forceReload: false);
+		if (roslynSolution is null || !TryGetFilePathFromUri(uri, out var filePath)) return;
+
+		var docId = roslynSolution.GetDocumentIdsWithFilePath(filePath).FirstOrDefault();
+		var roslynDoc = docId is not null ? roslynSolution.GetDocument(docId) : null;
+		if (roslynDoc is null) return;
+
+		if (documents.TryGetValue(uri, out var liveText))
+			roslynDoc = roslynDoc.WithText(SourceText.From(liveText, Encoding.UTF8));
+
+		var semanticModel = await roslynDoc.GetSemanticModelAsync();
+		if (semanticModel is null) return;
+
+		var diagArray = new JsonArray();
+		foreach (var diag in semanticModel.GetDiagnostics())
+		{
+			if (diag.Severity < DiagnosticSeverity.Warning) continue;
+			var loc = diag.Location;
+			if (loc.Kind != LocationKind.SourceFile) continue;
+
+			var lineSpan = loc.GetLineSpan();
+			var s = lineSpan.StartLinePosition;
+			var e = lineSpan.EndLinePosition;
+			var lspSeverity = diag.Severity switch
+			{
+				DiagnosticSeverity.Error   => 1,
+				DiagnosticSeverity.Warning => 2,
+				DiagnosticSeverity.Info    => 3,
+				_                          => 4
+			};
+			diagArray.Add(new JsonObject
+			{
+				["range"]    = CreateRange(s.Line, s.Character, e.Line, e.Character),
+				["severity"] = lspSeverity,
+				["code"]     = diag.Id,
+				["source"]   = "VBNetCompanion",
+				["message"]  = diag.GetMessage()
+			});
+		}
+
+		var notification = new JsonObject
+		{
+			["jsonrpc"] = JsonRpcVersion,
+			["method"]  = "textDocument/publishDiagnostics",
+			["params"]  = new JsonObject
+			{
+				["uri"]         = uri,
+				["diagnostics"] = diagArray
+			}
+		};
+		await WriteMessageAsync(standardOutput, notification);
+		await LogAsync($"Diagnostics: {diagArray.Count} issues for {Path.GetFileName(filePath)}");
+	}
+	catch (Exception ex)
+	{
+		await LogAsync($"Diagnostics push failed: {ex.Message}", 2);
+	}
+}
+
+// ─── Document Symbols ─────────────────────────────────────────────────────────
+async Task<JsonNode> HandleDocumentSymbolAsync(JsonElement requestRoot, ConcurrentDictionary<string, string> documents)
+{
+	var empty = new JsonArray();
+	await EnsureRoslynWorkspaceLoadedAsync(forceReload: false);
+	if (roslynSolution is null || !TryReadUri(requestRoot, out var uri) || !TryGetFilePathFromUri(uri, out var filePath))
+		return empty;
+
+	var docId = roslynSolution.GetDocumentIdsWithFilePath(filePath).FirstOrDefault();
+	var roslynDoc = docId is not null ? roslynSolution.GetDocument(docId) : null;
+	if (roslynDoc is null) return empty;
+
+	if (documents.TryGetValue(uri, out var liveText))
+		roslynDoc = roslynDoc.WithText(SourceText.From(liveText, Encoding.UTF8));
+
+	try
+	{
+		var syntaxRoot    = await roslynDoc.GetSyntaxRootAsync();
+		var semanticModel = await roslynDoc.GetSemanticModelAsync();
+		var docText       = await roslynDoc.GetTextAsync();
+		var symbols       = new JsonArray();
+		var seen          = new HashSet<ISymbol>(SymbolEqualityComparer.Default);
+
+		foreach (var node in syntaxRoot!.DescendantNodes())
+		{
+			var sym = semanticModel!.GetDeclaredSymbol(node);
+			if (sym is null || sym.IsImplicitlyDeclared || !seen.Add(sym)) continue;
+
+			var loc = sym.Locations.FirstOrDefault(l =>
+				l.IsInSource && string.Equals(l.SourceTree?.FilePath, filePath, StringComparison.OrdinalIgnoreCase));
+			if (loc is null) continue;
+
+			var spanStart = docText.Lines.GetLinePosition(loc.SourceSpan.Start);
+			var spanEnd   = docText.Lines.GetLinePosition(loc.SourceSpan.End);
+
+			var kind = sym switch
+			{
+				INamedTypeSymbol { TypeKind: TypeKind.Class }     => 5,
+				INamedTypeSymbol { TypeKind: TypeKind.Enum }      => 10,
+				INamedTypeSymbol { TypeKind: TypeKind.Interface } => 11,
+				INamedTypeSymbol { TypeKind: TypeKind.Struct }    => 23,
+				INamedTypeSymbol                                   => 2,   // Module → Module
+				IMethodSymbol { MethodKind: MethodKind.Constructor } => 9,
+				IMethodSymbol                                      => 6,
+				IPropertySymbol                                    => 7,
+				IFieldSymbol { IsConst: true }                     => 14,
+				IFieldSymbol                                       => 8,
+				IEventSymbol                                       => 24,
+				INamespaceSymbol                                   => 3,
+				_                                                  => 13
+			};
+
+			symbols.Add(new JsonObject
+			{
+				["name"]           = sym.Name,
+				["kind"]           = kind,
+				["range"]          = CreateRange(spanStart.Line, spanStart.Character, spanEnd.Line, spanEnd.Character),
+				["selectionRange"] = CreateRange(spanStart.Line, spanStart.Character, spanStart.Line, spanStart.Character + sym.Name.Length)
+			});
+		}
+
+		await LogAsync($"DocumentSymbol: {symbols.Count} symbols in {Path.GetFileName(filePath)}");
+		return symbols;
+	}
+	catch (Exception ex)
+	{
+		await LogAsync($"DocumentSymbol failed: {ex.Message}", 2);
+		return empty;
+	}
+}
+
+// ─── Document Highlights ──────────────────────────────────────────────────────
+async Task<JsonNode?> HandleDocumentHighlightAsync(JsonElement requestRoot, ConcurrentDictionary<string, string> documents)
+{
+	var context = await TryResolveRoslynContextAsync(requestRoot);
+	if (context is null) return null;
+
+	var doc = context.Value.Document;
+	if (TryReadUri(requestRoot, out var hlUri) && documents.TryGetValue(hlUri, out var liveText))
+		doc = doc.WithText(SourceText.From(liveText, Encoding.UTF8));
+
+	var symbol = await ResolveSymbolAtPositionAsync(doc, context.Value.Position);
+	if (symbol is null) return null;
+
+	var docText    = await doc.GetTextAsync();
+	var highlights = new JsonArray();
+	var seen       = new HashSet<int>();
+
+	var refs = await SymbolFinder.FindReferencesAsync(symbol, context.Value.Solution);
+	foreach (var referencedSymbol in refs)
+	{
+		// Declaration locations (write kind = 2)
+		foreach (var declLoc in referencedSymbol.Definition.Locations.Where(l => l.IsInSource))
+		{
+			if (!string.Equals(declLoc.SourceTree?.FilePath, doc.FilePath, StringComparison.OrdinalIgnoreCase)) continue;
+			if (!seen.Add(declLoc.SourceSpan.Start)) continue;
+			var s = docText.Lines.GetLinePosition(declLoc.SourceSpan.Start);
+			var e = docText.Lines.GetLinePosition(declLoc.SourceSpan.End);
+			highlights.Add(new JsonObject { ["range"] = CreateRange(s.Line, s.Character, e.Line, e.Character), ["kind"] = 2 });
+		}
+		// Reference locations (text kind = 1)
+		foreach (var refLoc in referencedSymbol.Locations)
+		{
+			if (!string.Equals(refLoc.Location.SourceTree?.FilePath, doc.FilePath, StringComparison.OrdinalIgnoreCase)) continue;
+			if (!seen.Add(refLoc.Location.SourceSpan.Start)) continue;
+			var s = docText.Lines.GetLinePosition(refLoc.Location.SourceSpan.Start);
+			var e = docText.Lines.GetLinePosition(refLoc.Location.SourceSpan.End);
+			highlights.Add(new JsonObject { ["range"] = CreateRange(s.Line, s.Character, e.Line, e.Character), ["kind"] = 1 });
+		}
+	}
+
+	await LogAsync($"DocumentHighlight: {highlights.Count} highlights");
+	return highlights;
+}
+
+// ─── Signature Help ───────────────────────────────────────────────────────────
+async Task<JsonNode?> HandleSignatureHelpAsync(JsonElement requestRoot, ConcurrentDictionary<string, string> documents)
+{
+	await EnsureRoslynWorkspaceLoadedAsync(forceReload: false);
+	if (roslynSolution is null) return null;
+
+	if (!TryReadPosition(requestRoot, out var uri, out var line, out var character)) return null;
+	if (!TryGetFilePathFromUri(uri, out var filePath)) return null;
+
+	var docId    = roslynSolution.GetDocumentIdsWithFilePath(filePath).FirstOrDefault();
+	var roslynDoc = docId is not null ? roslynSolution.GetDocument(docId) : null;
+	if (roslynDoc is null) return null;
+
+	if (documents.TryGetValue(uri, out var liveText))
+		roslynDoc = roslynDoc.WithText(SourceText.From(liveText, Encoding.UTF8));
+
+	try
+	{
+		var sourceText = await roslynDoc.GetTextAsync();
+		if (line < 0 || line >= sourceText.Lines.Count) return null;
+
+		var safeChar = Math.Clamp(character, 0, sourceText.Lines[line].Span.Length);
+		var position = sourceText.Lines.GetPosition(new LinePosition(line, safeChar));
+		var rawText  = sourceText.ToString();
+
+		// Walk backward to find the opening '(' for the current call and count commas.
+		var depth       = 0;
+		var activeParam = 0;
+		var callPos     = -1;
+		for (var i = position - 1; i >= 0; i--)
+		{
+			var ch = rawText[i];
+			if (ch == ')' || ch == ']') { depth++; continue; }
+			if (ch == '(' || ch == '[')
+			{
+				if (depth > 0) { depth--; continue; }
+				callPos = i;
+				break;
+			}
+			if (ch == ',' && depth == 0) activeParam++;
+		}
+		if (callPos < 0) return null;
+
+		// Resolve the symbol at the position just before '('.
+		var symPosition = Math.Max(0, callPos - 1);
+		var symbol = await ResolveSymbolAtPositionAsync(roslynDoc, symPosition);
+
+		IEnumerable<IMethodSymbol> methods = symbol switch
+		{
+			IMethodSymbol ms                                  => new[] { ms },
+			INamedTypeSymbol ts when ts.TypeKind != TypeKind.Enum => ts.InstanceConstructors.Cast<IMethodSymbol>(),
+			_                                                  => []
+		};
+
+		var signatures     = new JsonArray();
+		var activeSignature = 0;
+		var sigIdx          = 0;
+
+		foreach (var m in methods)
+		{
+			var paramLabels = new JsonArray();
+			foreach (var p in m.Parameters)
+				paramLabels.Add(new JsonObject { ["label"] = $"{p.Name} As {p.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)}" });
+
+			var isVoid  = m.ReturnsVoid || m.MethodKind == MethodKind.Constructor;
+			var paramStr = string.Join(", ", m.Parameters.Select(p =>
+				$"{p.Name} As {p.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)}"));
+			var label   = isVoid
+				? $"Sub {m.Name}({paramStr})"
+				: $"Function {m.Name}({paramStr}) As {m.ReturnType.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)}";
+
+			var sig = new JsonObject { ["label"] = label, ["parameters"] = paramLabels };
+			try
+			{
+				var xml = m.GetDocumentationCommentXml();
+				if (!string.IsNullOrWhiteSpace(xml))
+				{
+					var xdoc    = XDocument.Parse(xml);
+					var summary = xdoc.Descendants("summary").FirstOrDefault()?.Value?.Trim();
+					if (!string.IsNullOrEmpty(summary)) sig["documentation"] = summary;
+				}
+			}
+			catch { }
+
+			signatures.Add(sig);
+			if (m.Parameters.Length > activeParam) activeSignature = sigIdx;
+			sigIdx++;
+		}
+
+		if (signatures.Count == 0) return null;
+
+		return new JsonObject
+		{
+			["signatures"]      = signatures,
+			["activeSignature"] = activeSignature,
+			["activeParameter"] = Math.Min(activeParam, ((JsonArray)signatures[activeSignature]!["parameters"]!).Count - 1)
+		};
+	}
+	catch (Exception ex)
+	{
+		await LogAsync($"SignatureHelp failed: {ex.Message}", 2);
+		return null;
 	}
 }
 
