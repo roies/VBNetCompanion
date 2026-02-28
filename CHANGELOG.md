@@ -8,6 +8,15 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.15] - 2026-02-28
+
+### Added
+
+- **Inlay hints** (`textDocument/inlayHint`): parameter-name hints appear inline at each call-site argument. Hints are suppressed for single-character parameter names, params arrays, already-named arguments (VB `:=` / C# `name:`), and arguments whose text trivially matches the parameter name.
+- **Workspace symbol search** (`workspace/symbol`): Ctrl+T / ⌘+T now searches all symbols (types, methods, properties, fields, events, namespaces) across the full solution via `SymbolFinder.FindDeclarationsAsync`. Results are capped at 200 and deduplicated across projects.
+- **Call hierarchy** (`textDocument/prepareCallHierarchy`, `callHierarchy/incomingCalls`, `callHierarchy/outgoingCalls`): right-click → Peek Call Hierarchy shows all callers of a method/property (incoming) and all methods called from its body (outgoing). Cross-project symbols are resolved via `FindSourceDefinitionAsync`.
+- **Code actions / quick fixes** (`textDocument/codeAction`): two actions provided — “Remove N unused import(s)” (detects BC50001 / CS8019 diagnostics, `source.organizeImports` kind) and “Suppress [code]” which inserts a `#Disable Warning` (VB) or `#pragma warning disable` (C#) comment above the offending line.
+
 ## [0.1.14] - 2026-02-28
 
 ### Fixed
