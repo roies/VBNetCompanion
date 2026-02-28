@@ -53,7 +53,7 @@ In short:
 - `VSExtensionForVB: Apply Roslyn Bridge Preset`
 - `VSExtensionForVB: Check Language Client Bridge Compatibility`
 
-When you run the parity status command, it now probes provider availability for:
+When you run the parity status command, it probes provider availability in parallel (with a 5 s timeout per probe) for:
 
 - Definition (`F12` behavior)
 - Completion (IntelliSense)
@@ -94,9 +94,9 @@ The extension also shows a live status bar indicator:
 
 ## Language-Client Bridge Scaffold
 
-Automatic bootstrap is enabled by default. After install, the extension attempts to configure a working bridge automatically on first activation.
+Automatic bootstrap is enabled by default. After install, the extension attempts to configure a working bridge automatically on first activation **only when no compatible server command is already set**. Existing user configuration is never overwritten.
 
-The extension now prefers its bundled companion VB server and configures:
+The extension prefers its bundled companion VB server and configures:
 
 - `languageClientServerCommand = dotnet`
 - `languageClientServerArgs = [<bundled-server-dll>, --stdio]`
@@ -108,7 +108,7 @@ This is designed to be install-and-go (no manual preset command required).
 
 If no bundled server is available in a dev scenario, bootstrap falls back to the companion server project (`dotnet run --project ... -- --stdio`) when present.
 
-If the configured server points to the bundled C# extension Roslyn executable and is detected as incompatible for standalone bridge usage, the extension auto-disables bridge startup to prevent LSP error loops.
+If the configured server points to the bundled C# extension Roslyn executable, or if the path does not exist on disk, the extension auto-disables bridge startup to prevent LSP error loops. The Linux Roslyn executable (no `.exe` suffix) is also detected and blocked correctly.
 
 Manual override (optional):
 
