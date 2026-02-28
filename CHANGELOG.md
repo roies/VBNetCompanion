@@ -1,12 +1,21 @@
 # Change Log
 
-All notable changes to the "vsextensionforvb" extension will be documented in this file.
+All notable changes to the "vbnet-companion" extension will be documented in this file.
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
 ## [Unreleased]
 
 - No pending unreleased changes.
+
+## [0.1.0] - 2026-02-28
+
+### Changed
+
+- Extension renamed from `VSExtensionForVB` to `VB.NET Companion`.
+- All command IDs updated from `vsextensionforvb.*` to `vbnetcompanion.*`.
+- All configuration keys updated from `vsextensionforvb.*` to `vbnetcompanion.*`.
+- Version promoted from `0.1.0-beta` to `0.1.0` (stable release).
 
 ## [0.1.0-beta] - 2026-02-26
 
@@ -30,7 +39,7 @@ This beta delivers the first end-to-end parity-focused foundation for VB.NET alo
 
 ### Changed
 
-- Extension version updated to `0.1.0-beta`.
+- Initial beta release (`0.1.0-beta`).
 
 ### Notes
 

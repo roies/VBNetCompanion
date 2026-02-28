@@ -1,12 +1,15 @@
 {
-  "name": "vsextensionforvb",
-  "displayName": "VSExtensionForVB",
+  "name": "vbnet-companion",
+  "displayName": "VB.NET Companion",
   "description": "Enhances .NET support with focus on VB.NET parity with C# for navigation, IntelliSense, and refactoring.",
-  "version": "0.1.0-beta",
+  "version": "0.1.0",
+  "publisher": "roies",
+  "icon": "images/icon.png",
+  "keywords": ["vb.net", "visual basic", ".net", "csharp", "parity", "language server", "intellisense", "roslyn"],
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/roies/VSExtensionForVB.git"
+    "url": "https://github.com/roies/VBNetCompanion.git"
   },
   "engines": {
     "vscode": "^1.109.0"
@@ -21,48 +24,48 @@
   "contributes": {
     "commands": [
       {
-        "command": "vsextensionforvb.showParityStatus",
-        "title": "VSExtensionForVB: Show .NET Language Parity Status"
+        "command": "vbnetcompanion.showParityStatus",
+        "title": "VB.NET Companion: Show .NET Language Parity Status"
       },
       {
-        "command": "vsextensionforvb.restartDotnetLanguageServices",
-        "title": "VSExtensionForVB: Restart .NET Language Services"
+        "command": "vbnetcompanion.restartDotnetLanguageServices",
+        "title": "VB.NET Companion: Restart .NET Language Services"
       },
       {
-        "command": "vsextensionforvb.remediateParityGaps",
-        "title": "VSExtensionForVB: Remediate VB.NET Parity Gaps"
+        "command": "vbnetcompanion.remediateParityGaps",
+        "title": "VB.NET Companion: Remediate VB.NET Parity Gaps"
       },
       {
-        "command": "vsextensionforvb.restartLanguageClientBridge",
-        "title": "VSExtensionForVB: Restart Language Client Bridge"
+        "command": "vbnetcompanion.restartLanguageClientBridge",
+        "title": "VB.NET Companion: Restart Language Client Bridge"
       },
       {
-        "command": "vsextensionforvb.applyRoslynBridgePreset",
-        "title": "VSExtensionForVB: Apply Roslyn Bridge Preset"
+        "command": "vbnetcompanion.applyRoslynBridgePreset",
+        "title": "VB.NET Companion: Apply Roslyn Bridge Preset"
       },
       {
-        "command": "vsextensionforvb.checkLanguageClientBridgeCompatibility",
-        "title": "VSExtensionForVB: Check Language Client Bridge Compatibility"
+        "command": "vbnetcompanion.checkLanguageClientBridgeCompatibility",
+        "title": "VB.NET Companion: Check Language Client Bridge Compatibility"
       },
       {
-        "command": "vsextensionforvb.showReferencesFromBridge",
-        "title": "VSExtensionForVB: Show References From Bridge"
+        "command": "vbnetcompanion.showReferencesFromBridge",
+        "title": "VB.NET Companion: Show References From Bridge"
       }
     ],
     "configuration": {
-      "title": "VSExtensionForVB",
+      "title": "VB.NET Companion",
       "properties": {
-        "vsextensionforvb.enableForCSharp": {
+        "vbnetcompanion.enableForCSharp": {
           "type": "boolean",
           "default": true,
           "description": "Enable parity checks and helper workflows for C# files."
         },
-        "vsextensionforvb.enableForVisualBasic": {
+        "vbnetcompanion.enableForVisualBasic": {
           "type": "boolean",
           "default": true,
           "description": "Enable parity checks and helper workflows for VB.NET files."
         },
-        "vsextensionforvb.preferredLanguageServer": {
+        "vbnetcompanion.preferredLanguageServer": {
           "type": "string",
           "enum": [
             "auto",
@@ -72,44 +75,44 @@
           "default": "auto",
           "description": "Preferred .NET language service stack for navigation, IntelliSense, and refactoring features."
         },
-        "vsextensionforvb.autoCheckToolingOnStartup": {
+        "vbnetcompanion.autoCheckToolingOnStartup": {
           "type": "boolean",
           "default": true,
           "description": "Automatically check for required .NET language tooling when VS Code startup completes."
         },
-        "vsextensionforvb.promptToInstallMissingTooling": {
+        "vbnetcompanion.promptToInstallMissingTooling": {
           "type": "boolean",
           "default": true,
           "description": "Show install guidance prompts when .NET language extensions are missing."
         },
-        "vsextensionforvb.statusRefreshDelayMs": {
+        "vbnetcompanion.statusRefreshDelayMs": {
           "type": "number",
           "default": 300,
           "minimum": 50,
           "maximum": 5000,
           "description": "Debounce delay in milliseconds for refreshing the VB parity status indicator."
         },
-        "vsextensionforvb.enableLanguageClientBridge": {
+        "vbnetcompanion.enableLanguageClientBridge": {
           "type": "boolean",
           "default": false,
           "description": "Enable the optional .NET language-client bridge scaffold."
         },
-        "vsextensionforvb.enableBridgeForCSharp": {
+        "vbnetcompanion.enableBridgeForCSharp": {
           "type": "boolean",
           "default": false,
           "description": "Route C# documents through the language-client bridge. Keep this off unless your configured server supports C#."
         },
-        "vsextensionforvb.enableBridgeForVisualBasic": {
+        "vbnetcompanion.enableBridgeForVisualBasic": {
           "type": "boolean",
           "default": false,
           "description": "Route VB.NET documents through the language-client bridge. Keep this off unless your configured server supports Visual Basic."
         },
-        "vsextensionforvb.languageClientServerCommand": {
+        "vbnetcompanion.languageClientServerCommand": {
           "type": "string",
           "default": "",
           "description": "Server command used by the optional language-client bridge (for example, a Roslyn LSP host executable)."
         },
-        "vsextensionforvb.languageClientServerArgs": {
+        "vbnetcompanion.languageClientServerArgs": {
           "type": "array",
           "default": [],
           "items": {
@@ -117,7 +120,7 @@
           },
           "description": "Arguments passed to the configured language-client bridge server command."
         },
-        "vsextensionforvb.languageClientTraceLevel": {
+        "vbnetcompanion.languageClientTraceLevel": {
           "type": "string",
           "enum": [
             "off",
@@ -127,7 +130,7 @@
           "default": "off",
           "description": "Trace level for the optional language-client bridge."
         },
-        "vsextensionforvb.autoBootstrapRoslynBridge": {
+        "vbnetcompanion.autoBootstrapRoslynBridge": {
           "type": "boolean",
           "default": true,
           "description": "Automatically configure and enable the Roslyn bridge on first run when a compatible C# extension installation is detected."
@@ -137,7 +140,7 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run build:server && npm run package",
-    "build:server": "dotnet publish ./server/VSExtensionForVB.LanguageServer/VSExtensionForVB.LanguageServer.csproj -c Release -r win-x64 --self-contained false /p:PublishSingleFile=true /p:PublishTrimmed=false -o ./server/VSExtensionForVB.LanguageServer/publish && node -e \"const fs=require('node:fs'); try { fs.rmSync('./server/VSExtensionForVB.LanguageServer/publish/VSExtensionForVB.LanguageServer.dll'); } catch {}\"",
+    "build:server": "dotnet publish ./server/VBNetCompanion.LanguageServer/VBNetCompanion.LanguageServer.csproj -c Release -r win-x64 --self-contained false /p:PublishSingleFile=true /p:PublishTrimmed=false -o ./server/VBNetCompanion.LanguageServer/publish && node -e \"const fs=require('node:fs'); try { fs.rmSync('./server/VBNetCompanion.LanguageServer/publish/VBNetCompanion.LanguageServer.dll'); } catch {}\"",
     "compile": "npm run check-types && npm run lint && node esbuild.js",
     "watch": "npm-run-all -p watch:*",
     "watch:esbuild": "node esbuild.js --watch",

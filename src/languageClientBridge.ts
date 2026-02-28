@@ -18,7 +18,7 @@ export class DotnetLanguageClientBridge {
 	constructor(private readonly outputChannel: vscode.OutputChannel) {}
 
 	public async startFromConfiguration(): Promise<void> {
-		const config = vscode.workspace.getConfiguration('vsextensionforvb');
+		const config = vscode.workspace.getConfiguration('vbnetcompanion');
 		const enabled = config.get<boolean>('enableLanguageClientBridge', false);
 		if (!enabled) {
 			this.outputChannel.appendLine('[Bridge] Language client bridge is disabled.');
@@ -38,7 +38,7 @@ export class DotnetLanguageClientBridge {
 				: vscode.ConfigurationTarget.Global;
 			await config.update('enableLanguageClientBridge', false, target);
 			this.outputChannel.appendLine(`[Bridge] Disabled bridge startup: ${compatibility.message}`);
-			void vscode.window.showWarningMessage(`VSExtensionForVB disabled the bridge: ${compatibility.message}`);
+			void vscode.window.showWarningMessage(`VB.NET Companion disabled the bridge: ${compatibility.message}`);
 			return;
 		}
 
@@ -68,8 +68,8 @@ export class DotnetLanguageClientBridge {
 		const { LanguageClient, Trace } = languageClientModule;
 
 		const client = new LanguageClient(
-			'vsextensionforvb.dotnetBridge',
-			'VSExtensionForVB .NET Bridge',
+			'vbnetcompanion.dotnetBridge',
+			'VB.NET Companion Bridge',
 			{
 				command: resolvedCommand,
 				args,
@@ -80,7 +80,7 @@ export class DotnetLanguageClientBridge {
 				outputChannel: this.outputChannel,
 				traceOutputChannel: this.outputChannel,
 				synchronize: {
-					configurationSection: ['vsextensionforvb']
+					configurationSection: ['vbnetcompanion']
 				}
 			}
 		);
@@ -103,8 +103,8 @@ export class DotnetLanguageClientBridge {
 
 			this.outputChannel.appendLine('[Bridge] Retrying bridge with companion project fallback command.');
 			const fallbackClient = new LanguageClient(
-				'vsextensionforvb.dotnetBridge',
-				'VSExtensionForVB .NET Bridge',
+				'vbnetcompanion.dotnetBridge',
+				'VB.NET Companion Bridge',
 				{
 					command: fallback.command,
 					args: fallback.args,
@@ -115,7 +115,7 @@ export class DotnetLanguageClientBridge {
 					outputChannel: this.outputChannel,
 					traceOutputChannel: this.outputChannel,
 					synchronize: {
-						configurationSection: ['vsextensionforvb']
+						configurationSection: ['vbnetcompanion']
 					}
 				}
 			);
@@ -171,7 +171,7 @@ export class DotnetLanguageClientBridge {
 
 	private buildCompanionProjectFallback(command: string, args: string[]): { command: string; args: string[] } | undefined {
 		const combined = `${command} ${args.join(' ')}`.toLowerCase();
-		if (!combined.includes('vsextensionforvb.languageserver')) {
+		if (!combined.includes('vbnetcompanion.languageserver')) {
 			return undefined;
 		}
 
@@ -186,7 +186,7 @@ export class DotnetLanguageClientBridge {
 	}
 
 	private resolveBridgeLaunch(command: string, args: string[]): { command: string; args: string[]; reason?: string } {
-		const looksLikeCompanionBinary = `${command} ${args.join(' ')}`.toLowerCase().includes('vsextensionforvb.languageserver');
+		const looksLikeCompanionBinary = `${command} ${args.join(' ')}`.toLowerCase().includes('vbnetcompanion.languageserver');
 		if (!looksLikeCompanionBinary) {
 			return { command, args };
 		}
@@ -208,9 +208,9 @@ export class DotnetLanguageClientBridge {
 		for (const folder of workspaceFolders) {
 			const folderPath = folder.uri.fsPath;
 			const candidates = [
-				path.join(folderPath, 'server', 'VSExtensionForVB.LanguageServer', 'VSExtensionForVB.LanguageServer.csproj'),
-				path.join(folderPath, '..', 'server', 'VSExtensionForVB.LanguageServer', 'VSExtensionForVB.LanguageServer.csproj'),
-				path.join(folderPath, '..', '..', 'server', 'VSExtensionForVB.LanguageServer', 'VSExtensionForVB.LanguageServer.csproj')
+				path.join(folderPath, 'server', 'VBNetCompanion.LanguageServer', 'VBNetCompanion.LanguageServer.csproj'),
+				path.join(folderPath, '..', 'server', 'VBNetCompanion.LanguageServer', 'VBNetCompanion.LanguageServer.csproj'),
+				path.join(folderPath, '..', '..', 'server', 'VBNetCompanion.LanguageServer', 'VBNetCompanion.LanguageServer.csproj')
 			];
 
 			for (const candidate of candidates) {
@@ -230,7 +230,7 @@ export function assessBridgeServerCompatibility(commandPath: string): BridgeComp
 		return {
 			isCompatible: false,
 			message: 'No bridge server command is configured.',
-			hint: 'Set vsextensionforvb.languageClientServerCommand to a compatible standalone LSP server.'
+			hint: 'Set vbnetcompanion.languageClientServerCommand to a compatible standalone LSP server.'
 		};
 	}
 
@@ -247,7 +247,7 @@ export function assessBridgeServerCompatibility(commandPath: string): BridgeComp
 		return {
 			isCompatible: false,
 			message: `Configured server command does not exist at the specified path: ${resolvedCommand}`,
-			hint: 'Verify the path in vsextensionforvb.languageClientServerCommand or use the Apply Roslyn Bridge Preset command.'
+			hint: 'Verify the path in vbnetcompanion.languageClientServerCommand or use the Apply Roslyn Bridge Preset command.'
 		};
 	}
 

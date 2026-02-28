@@ -1,6 +1,6 @@
-# VSExtensionForVB
+# VB.NET Companion
 
-VSExtensionForVB is a TypeScript-based VS Code extension scaffold focused on improving .NET editing parity for VB.NET with C#.
+VB.NET Companion is a TypeScript-based VS Code extension scaffold focused on improving .NET editing parity for VB.NET with C#.
 
 ## Objective
 
@@ -29,9 +29,9 @@ Implemented today:
 - Guided remediation command for VB.NET parity gaps
 - Startup tooling checks and install prompts for required .NET extensions
 - Live status bar indicator (`VB parity: OK` / `VB parity: N gaps`)
-- Configurable status refresh debounce (`vsextensionforvb.statusRefreshDelayMs`)
+- Configurable status refresh debounce (`vbnetcompanion.statusRefreshDelayMs`)
 - Optional language-client bridge scaffold for .NET LSP integration
-- Companion VB language server scaffold (`server/VSExtensionForVB.LanguageServer`)
+- Companion VB language server scaffold (`server/VBNetCompanion.LanguageServer`)
 
 ## Current Support Boundary
 
@@ -46,12 +46,12 @@ In short:
 
 ## Commands
 
-- `VSExtensionForVB: Show .NET Language Parity Status`
-- `VSExtensionForVB: Remediate VB.NET Parity Gaps`
-- `VSExtensionForVB: Restart .NET Language Services`
-- `VSExtensionForVB: Restart Language Client Bridge`
-- `VSExtensionForVB: Apply Roslyn Bridge Preset`
-- `VSExtensionForVB: Check Language Client Bridge Compatibility`
+- `VB.NET Companion: Show .NET Language Parity Status`
+- `VB.NET Companion: Remediate VB.NET Parity Gaps`
+- `VB.NET Companion: Restart .NET Language Services`
+- `VB.NET Companion: Restart Language Client Bridge`
+- `VB.NET Companion: Apply Roslyn Bridge Preset`
+- `VB.NET Companion: Check Language Client Bridge Compatibility`
 
 When you run the parity status command, it probes provider availability in parallel (with a 5 s timeout per probe) for:
 
@@ -61,7 +61,7 @@ When you run the parity status command, it probes provider availability in paral
 - Rename refactoring
 - Code actions
 
-Detailed results are emitted to the output channel `VSExtensionForVB`.
+Detailed results are emitted to the output channel `VB.NET Companion`.
 
 The remediation command runs the same probe, identifies VB.NET gaps relative to C#, and provides guided actions:
 
@@ -78,19 +78,19 @@ The extension also shows a live status bar indicator:
 
 ## Configuration
 
-- `vsextensionforvb.enableForCSharp`
-- `vsextensionforvb.enableForVisualBasic`
-- `vsextensionforvb.preferredLanguageServer`
-- `vsextensionforvb.autoCheckToolingOnStartup`
-- `vsextensionforvb.promptToInstallMissingTooling`
-- `vsextensionforvb.statusRefreshDelayMs`
-- `vsextensionforvb.enableLanguageClientBridge`
-- `vsextensionforvb.enableBridgeForCSharp`
-- `vsextensionforvb.enableBridgeForVisualBasic`
-- `vsextensionforvb.languageClientServerCommand`
-- `vsextensionforvb.languageClientServerArgs`
-- `vsextensionforvb.languageClientTraceLevel`
-- `vsextensionforvb.autoBootstrapRoslynBridge`
+- `vbnetcompanion.enableForCSharp`
+- `vbnetcompanion.enableForVisualBasic`
+- `vbnetcompanion.preferredLanguageServer`
+- `vbnetcompanion.autoCheckToolingOnStartup`
+- `vbnetcompanion.promptToInstallMissingTooling`
+- `vbnetcompanion.statusRefreshDelayMs`
+- `vbnetcompanion.enableLanguageClientBridge`
+- `vbnetcompanion.enableBridgeForCSharp`
+- `vbnetcompanion.enableBridgeForVisualBasic`
+- `vbnetcompanion.languageClientServerCommand`
+- `vbnetcompanion.languageClientServerArgs`
+- `vbnetcompanion.languageClientTraceLevel`
+- `vbnetcompanion.autoBootstrapRoslynBridge`
 
 ## Language-Client Bridge Scaffold
 
@@ -112,24 +112,24 @@ If the configured server points to the bundled C# extension Roslyn executable, o
 
 Manual override (optional):
 
-1. Set `vsextensionforvb.enableLanguageClientBridge` to `true`.
-2. Provide a server command in `vsextensionforvb.languageClientServerCommand`.
-3. Optionally add arguments in `vsextensionforvb.languageClientServerArgs`.
+1. Set `vbnetcompanion.enableLanguageClientBridge` to `true`.
+2. Provide a server command in `vbnetcompanion.languageClientServerCommand`.
+3. Optionally add arguments in `vbnetcompanion.languageClientServerArgs`.
 
 When configured, the extension starts a `vscode-languageclient` instance targeting both `csharp` and `vb` documents.
 
-`VSExtensionForVB: Apply Roslyn Bridge Preset` provides a guided setup flow that:
+`VB.NET Companion: Apply Roslyn Bridge Preset` provides a guided setup flow that:
 
 - Prompts for a local Roslyn server executable path
 - Seeds common bridge args (`--stdio` by default)
 - Enables the bridge and sets trace level to `messages`
 - Restarts the bridge from updated settings
 
-`VSExtensionForVB: Check Language Client Bridge Compatibility` validates the configured bridge server path and offers quick actions when the setup is incompatible.
+`VB.NET Companion: Check Language Client Bridge Compatibility` validates the configured bridge server path and offers quick actions when the setup is incompatible.
 
 The companion server source lives in:
 
-- `server/VSExtensionForVB.LanguageServer`
+- `server/VBNetCompanion.LanguageServer`
 
 ## Development
 
@@ -162,9 +162,9 @@ Manual flow:
 
 1. Press `F5` to launch an Extension Development Host.
 2. In that new window, open the `test-workspace` folder.
-3. Run `VSExtensionForVB: Show .NET Language Parity Status`.
-4. Run `VSExtensionForVB: Remediate VB.NET Parity Gaps`.
-5. Inspect output channel `VSExtensionForVB` and status bar parity state.
+3. Run `VB.NET Companion: Show .NET Language Parity Status`.
+4. Run `VB.NET Companion: Remediate VB.NET Parity Gaps`.
+5. Inspect output channel `VB.NET Companion` and status bar parity state.
 
 ## Troubleshooting
 

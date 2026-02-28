@@ -75,8 +75,8 @@ while (true)
 				},
 				["serverInfo"] = new JsonObject
 				{
-					["name"] = "VSExtensionForVB.LanguageServer",
-					["version"] = "0.1.0-beta"
+					["name"] = "VBNetCompanion.LanguageServer",
+					["version"] = "0.1.0"
 				}
 			}
 		};
@@ -616,7 +616,7 @@ static JsonNode HandleCodeLens(JsonElement requestRoot, ConcurrentDictionary<str
 			["command"] = new JsonObject
 			{
 				["title"] = title,
-				["command"] = "vsextensionforvb.showReferencesFromBridge",
+				["command"] = "vbnetcompanion.showReferencesFromBridge",
 				["arguments"] = new JsonArray
 				{
 					uri,
