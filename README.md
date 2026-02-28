@@ -45,6 +45,8 @@ On first activation, the extension automatically configures a working Roslyn bri
 
 This extension adds parity diagnostics and cross-project references via its bundled Roslyn server. It does not replace the underlying .NET language server for C# — that is still provided by C# Dev Kit / C# extension. VB.NET intelligence is delivered through this extension's bridge.
 
+> **Platform:** Windows only (win-x64). The bundled companion server is a .NET 8 win-x64 binary. macOS and Linux support is planned for a future release.
+
 ## Commands
 
 - `VB.NET Companion: Show .NET Language Parity Status`
