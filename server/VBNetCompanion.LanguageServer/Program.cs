@@ -297,6 +297,11 @@ async Task<JsonNode?> TryHandleDefinitionHeuristicAsync(string sourceUri, IReadO
 		? FindLocalTypeForReceiver(sourceLines, receiver)
 		: null;
 
+	// For static method calls like DataAnalyzer.CalculateStatistics(), receiver is the class name
+	// but FindLocalTypeForReceiver returns null (it's not a local variable).
+	// Fall back to using the receiver token itself as the type filter.
+	var typeFilter = receiverType ?? receiver;
+
 	var candidates = Directory
 		.EnumerateFiles(workspaceRootPath, "*.*", SearchOption.AllDirectories)
 		.Where(path => path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".vb", StringComparison.OrdinalIgnoreCase))
@@ -310,9 +315,9 @@ async Task<JsonNode?> TryHandleDefinitionHeuristicAsync(string sourceUri, IReadO
 			continue;
 		}
 
-		if (!string.IsNullOrWhiteSpace(receiverType))
+		if (!string.IsNullOrWhiteSpace(typeFilter))
 		{
-			var hasContainingType = candidateLines.Any(candidateLine => Regex.IsMatch(candidateLine, $@"\b(class|module)\s+{Regex.Escape(receiverType)}\b", RegexOptions.IgnoreCase));
+			var hasContainingType = candidateLines.Any(candidateLine => Regex.IsMatch(candidateLine, $@"\b(class|struct|module)\s+{Regex.Escape(typeFilter)}\b", RegexOptions.IgnoreCase));
 			if (!hasContainingType)
 			{
 				continue;
@@ -321,6 +326,13 @@ async Task<JsonNode?> TryHandleDefinitionHeuristicAsync(string sourceUri, IReadO
 
 		for (var lineIndex = 0; lineIndex < candidateLines.Length; lineIndex++)
 		{
+			// Skip comment lines — they should never be navigation targets.
+			var trimmedCandidate = candidateLines[lineIndex].TrimStart();
+			if (trimmedCandidate.StartsWith("//") || trimmedCandidate.StartsWith("'") || trimmedCandidate.StartsWith("/*"))
+			{
+				continue;
+			}
+
 			if (!IsMethodDeclarationLine(candidateLines[lineIndex], symbol))
 			{
 				continue;
@@ -432,10 +444,26 @@ static bool IsMethodDeclarationLine(string line, string methodName)
 		return false;
 	}
 
-	var csharpPattern = $@"\b{Regex.Escape(methodName)}\s*\(";
+	// Skip comment lines.
+	var trimmed = line.TrimStart();
+	if (trimmed.StartsWith("//") || trimmed.StartsWith("'") || trimmed.StartsWith("/*") || trimmed.StartsWith("*"))
+	{
+		return false;
+	}
+
+	// C# method/constructor declaration: name must NOT be immediately preceded by a dot,
+	// which excludes call-sites like DataAnalyzer.CalculateStatistics(...).
+	var csharpMethodPattern = $@"(?<!\.){Regex.Escape(methodName)}\s*\(";
+
+	// Type declaration pattern for C# and VB (class, struct, interface, enum, Module).
+	var typeDeclarationPattern = $@"\b(class|struct|interface|enum|module)\s+{Regex.Escape(methodName)}\b";
+
+	// VB sub/function declaration.
 	var vbPattern = $@"\b(Function|Sub)\s+{Regex.Escape(methodName)}\b";
 
-	return Regex.IsMatch(line, csharpPattern, RegexOptions.IgnoreCase) || Regex.IsMatch(line, vbPattern, RegexOptions.IgnoreCase);
+	return Regex.IsMatch(line, csharpMethodPattern, RegexOptions.IgnoreCase)
+		|| Regex.IsMatch(line, typeDeclarationPattern, RegexOptions.IgnoreCase)
+		|| Regex.IsMatch(line, vbPattern, RegexOptions.IgnoreCase);
 }
 
 static JsonNode HandleCompletion(JsonElement requestRoot, ConcurrentDictionary<string, string> documents)

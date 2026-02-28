@@ -8,6 +8,14 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.2] - 2026-02-28
+
+### Fixed
+
+- **Go to Definition on type names navigates to comment line**: pressing F12 on a type name (e.g. `DataAnalyzer`) no longer lands on a comment containing that word. Comment lines (`'`, `//`, `/*`) are now skipped before matching.
+- **Go to Definition on static method navigates to wrong file**: pressing F12 on `DataAnalyzer.CalculateStatistics` now navigates to `DataAnalyzer.cs` instead of `Program.cs`. The receiver token (`DataAnalyzer`) is now used as a type-filter fallback even when the receiver is a static class rather than a local variable.
+- **`IsMethodDeclarationLine` matching call sites instead of declarations**: added a negative lookbehind `(?<!\.)` to the C# method pattern so `DataAnalyzer.CalculateStatistics(` call sites are never mistaken for declarations. Added class/struct/interface/enum/module type declaration patterns so F12 on a type name finds the class declaration.
+
 ## [0.1.1] - 2026-02-28
 
 ### Fixed

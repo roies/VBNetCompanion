@@ -2,7 +2,7 @@
   "name": "vbnet-companion",
   "displayName": "VB.NET Companion",
   "description": "Enhances .NET support with focus on VB.NET parity with C# for navigation, IntelliSense, and refactoring.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "roies",
   "icon": "images/icon.png",
   "keywords": ["vb.net", "visual basic", ".net", "csharp", "parity", "language server", "intellisense", "roslyn"],
