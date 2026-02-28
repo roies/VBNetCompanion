@@ -8,6 +8,17 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.1] - 2026-02-28
+
+### Fixed
+
+- **Go to Definition (F12) on implicit constructors**: pressing F12 on `New GreeterService()` in VB.NET where `GreeterService` has no explicit constructor now correctly navigates to the class declaration in C#. Previously the implicit Roslyn constructor symbol had no source location and the request returned nothing silently.
+- Added diagnostic logging to the definition handler so failures are now visible in the output channel.
+
+### Changed
+
+- README rewritten with marketplace-facing messaging: highlights the parity-first and cross-language differentiators, adds Getting Started flow, Commands and Configuration tables, and removes internal development notes.
+
 ## [0.1.0] - 2026-02-28
 
 ### Added

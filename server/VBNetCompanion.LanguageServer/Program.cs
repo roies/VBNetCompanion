@@ -995,16 +995,46 @@ async Task<JsonNode?> TryHandleDefinitionWithRoslynAsync(JsonElement requestRoot
 	var symbol = await ResolveSymbolAtPositionAsync(context.Value.Document, context.Value.Position);
 	if (symbol is null)
 	{
+		await LogAsync("Definition: no symbol at position");
 		return null;
 	}
 
-	var sourceLocation = symbol
+	await LogAsync($"Definition: resolved symbol '{symbol.Name}' kind={symbol.Kind} implicitlyDeclared={symbol.IsImplicitlyDeclared}");
+
+	// When the resolved symbol is an implicitly-declared constructor (e.g. `New GreeterService()` where
+	// GreeterService has no explicit constructor), navigate to the containing type instead.
+	var navigationSymbol = symbol;
+	if (navigationSymbol is Microsoft.CodeAnalysis.IMethodSymbol { MethodKind: Microsoft.CodeAnalysis.MethodKind.Constructor, IsImplicitlyDeclared: true } implicitCtor
+		&& implicitCtor.ContainingType is not null)
+	{
+		navigationSymbol = implicitCtor.ContainingType;
+		await LogAsync($"Definition: implicit ctor → navigating to containing type '{navigationSymbol.Name}'");
+	}
+
+	var sourceLocation = navigationSymbol
 		.Locations
 		.Where(location => location.IsInSource && location.SourceTree is not null)
 		.FirstOrDefault();
 
+	// If still no source location, try to resolve through the source definition (handles metadata stubs).
 	if (sourceLocation is null)
 	{
+		var sourceDef = await SymbolFinder.FindSourceDefinitionAsync(navigationSymbol, context.Value.Solution);
+		if (sourceDef is not null)
+		{
+			sourceLocation = sourceDef.Locations
+				.Where(location => location.IsInSource && location.SourceTree is not null)
+				.FirstOrDefault();
+			if (sourceLocation is not null)
+			{
+				await LogAsync($"Definition: found source definition via FindSourceDefinitionAsync for '{sourceDef.Name}'");
+			}
+		}
+	}
+
+	if (sourceLocation is null)
+	{
+		await LogAsync($"Definition: no source location found for '{navigationSymbol.Name}' (locations: {navigationSymbol.Locations.Length})");
 		return null;
 	}
 

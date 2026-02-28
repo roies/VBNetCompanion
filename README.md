@@ -1,188 +1,99 @@
 # VB.NET Companion
 
-VB.NET Companion narrows the editor experience gap between C# and VB.NET in VS Code. It adds parity diagnostics, guided remediation, and a bundled Roslyn-powered language server that brings **cross-project reference counting (CodeLens)** and **Go to Definition** from VB.NET into C# projects and vice versa.
+**VB.NET Companion** is the missing bridge for mixed-language .NET solutions in VS Code. Unlike standalone VB.NET language servers that replace your existing tooling, this extension works *alongside* C# Dev Kit to add the features that VB.NET has always been missing: **cross-language navigation**, **cross-project reference counts**, and **live parity diagnostics** that tell you exactly where VB.NET falls behind C#.
+
+## Why VB.NET Companion?
+
+Most VB.NET extensions for VS Code require you to throw out your existing C# setup and start over. VB.NET Companion is different:
+
+- **No conflicts.** Installs alongside C# Dev Kit without touching your existing configuration.
+- **Cross-language aware.** The bundled Roslyn server understands your whole solution — VB.NET *and* C# projects together.
+- **Parity-first.** The only extension that actively tracks where VB.NET lags behind C# and guides you to fix it.
 
 ## Features
 
+### Cross-Language Go to Definition (F12)
+
+Press `F12` on any VB.NET symbol that resolves to a C# type and jump straight to its definition — including C# classes with implicit constructors (e.g. `New GreeterService()`).
+
+Works across:
+- VB.NET → C# types, methods, properties, constructors
+- C# → VB.NET types
+
 ### Cross-Project Reference Counting (CodeLens)
 
-The bundled Roslyn language server loads your solution or projects and shows accurate reference counts directly in the editor — including cross-project references between VB.NET and C# code.
+The bundled Roslyn server loads your full solution and shows accurate reference counts in the editor — counting references that cross language and project boundaries.
 
-- C# method defined in `CSharpLib` called from `VbConsumer.vb` → shows **1 reference**
-- VB class referencing C# types → correctly counted
+- C# method called from a VB.NET project → shows the correct count
+- VB.NET class used from C# → correctly included
 - Works for classes, methods, properties, and constructors
 
-### Parity Probe
+### Live Parity Diagnostics
 
-Probes language feature availability in parallel for both C# and VB.NET:
+VB.NET Companion is the **only VS Code extension** that measures the live feature gap between C# and VB.NET in your workspace. It probes both languages in parallel and surfaces the results in a status bar indicator:
 
+- `VB parity: OK` — VB.NET and C# are on equal footing
+- `VB parity: N gaps` — N features available in C# are missing for VB.NET
+
+Click the indicator to open the full remediation flow.
+
+Probed features:
 - Go to Definition (`F12`)
 - IntelliSense / completions
 - References
 - Rename refactoring
 - Code actions
 
-Results surface in the output channel and status bar indicator (`VB parity: OK` / `VB parity: N gaps`).
-
 ### Guided Remediation
 
-When parity gaps are detected, the remediation command provides targeted actions:
+When parity gaps are detected, a targeted remediation command walks you through fixing them:
 
-- Open recommended .NET tooling extension on the Marketplace
+- Open the recommended .NET tooling extension on the Marketplace
 - Restart language services
-- Re-run probe
+- Re-run the probe
 - Open extension settings
 
-### Status Bar Indicator
+### Zero-Config Setup
 
-Live status bar item shows current parity health at a glance. Click to open the full remediation flow.
+On first activation, the extension automatically bootstraps the Roslyn bridge using the bundled companion server. No manual configuration required — install and start coding.
 
-### Auto-Bootstrap Roslyn Bridge
+## Getting Started
 
-On first activation, the extension automatically configures a working Roslyn bridge using the bundled companion server — no manual setup required.
+1. Install the extension.
+2. Open a folder containing a `.sln`, `.slnx`, or `.vbproj` file.
+3. The Roslyn bridge starts automatically.
+4. Run **VB.NET Companion: Show .NET Language Parity Status** to see a full parity report.
 
-## Current Support Boundary
-
-This extension adds parity diagnostics and cross-project references via its bundled Roslyn server. It does not replace the underlying .NET language server for C# — that is still provided by C# Dev Kit / C# extension. VB.NET intelligence is delivered through this extension's bridge.
-
-> **Platform:** Windows only (win-x64). The bundled companion server is a .NET 8 win-x64 binary. macOS and Linux support is planned for a future release.
+> **Platform:** Windows (win-x64). The bundled companion server is a .NET 8 win-x64 binary. macOS and Linux support is planned.
 
 ## Commands
 
-- `VB.NET Companion: Show .NET Language Parity Status`
-- `VB.NET Companion: Remediate VB.NET Parity Gaps`
-- `VB.NET Companion: Restart .NET Language Services`
-- `VB.NET Companion: Restart Language Client Bridge`
-- `VB.NET Companion: Apply Roslyn Bridge Preset`
-- `VB.NET Companion: Check Language Client Bridge Compatibility`
-
-When you run the parity status command, it probes provider availability in parallel (with a 5 s timeout per probe) for:
-
-- Definition (`F12` behavior)
-- Completion (IntelliSense)
-- References
-- Rename refactoring
-- Code actions
-
-Detailed results are emitted to the output channel `VB.NET Companion`.
-
-The remediation command runs the same probe, identifies VB.NET gaps relative to C#, and provides guided actions:
-
-- Open recommended .NET tooling extension
-- Restart language services
-- Re-run probe
-- Open extension settings
-
-The extension also shows a live status bar indicator:
-
-- `VB parity: OK` when no VB gaps are detected
-- `VB parity: N gaps` when VB is behind C#
-- Click the indicator to open the remediation flow
+| Command | Description |
+|---|---|
+| `VB.NET Companion: Show .NET Language Parity Status` | Probe and display the C# vs VB.NET feature parity report |
+| `VB.NET Companion: Remediate VB.NET Parity Gaps` | Run the guided fix flow for detected gaps |
+| `VB.NET Companion: Restart .NET Language Services` | Restart all .NET language services |
+| `VB.NET Companion: Restart Language Client Bridge` | Restart the companion Roslyn bridge |
+| `VB.NET Companion: Apply Roslyn Bridge Preset` | Guided setup for a custom Roslyn server path |
+| `VB.NET Companion: Check Language Client Bridge Compatibility` | Validate the configured bridge setup |
 
 ## Configuration
 
-- `vbnetcompanion.enableForCSharp`
-- `vbnetcompanion.enableForVisualBasic`
-- `vbnetcompanion.preferredLanguageServer`
-- `vbnetcompanion.autoCheckToolingOnStartup`
-- `vbnetcompanion.promptToInstallMissingTooling`
-- `vbnetcompanion.statusRefreshDelayMs`
-- `vbnetcompanion.enableLanguageClientBridge`
-- `vbnetcompanion.enableBridgeForCSharp`
-- `vbnetcompanion.enableBridgeForVisualBasic`
-- `vbnetcompanion.languageClientServerCommand`
-- `vbnetcompanion.languageClientServerArgs`
-- `vbnetcompanion.languageClientTraceLevel`
-- `vbnetcompanion.autoBootstrapRoslynBridge`
+| Setting | Default | Description |
+|---|---|---|
+| `vbnetcompanion.enableForCSharp` | `true` | Enable parity checks for C# files |
+| `vbnetcompanion.enableForVisualBasic` | `true` | Enable parity checks for VB.NET files |
+| `vbnetcompanion.preferredLanguageServer` | `auto` | Preferred .NET language service (`auto`, `csharp-dev-kit`, `omnisharp`) |
+| `vbnetcompanion.autoCheckToolingOnStartup` | `true` | Check for required tooling on startup |
+| `vbnetcompanion.promptToInstallMissingTooling` | `true` | Show install prompts when tooling is missing |
+| `vbnetcompanion.enableLanguageClientBridge` | `false` | Enable the Roslyn language client bridge |
+| `vbnetcompanion.enableBridgeForCSharp` | `false` | Route C# documents through the bridge |
+| `vbnetcompanion.enableBridgeForVisualBasic` | `true` | Route VB.NET documents through the bridge |
+| `vbnetcompanion.autoBootstrapRoslynBridge` | `true` | Auto-configure the bridge on first activation |
+| `vbnetcompanion.languageClientTraceLevel` | `off` | LSP trace verbosity (`off`, `messages`, `verbose`) |
 
-## Language-Client Bridge Scaffold
+## Requirements
 
-Automatic bootstrap is enabled by default. After install, the extension attempts to configure a working bridge automatically on first activation **only when no compatible server command is already set**. Existing user configuration is never overwritten.
-
-The extension prefers its bundled companion VB server and configures:
-
-- `languageClientServerCommand = dotnet`
-- `languageClientServerArgs = [<bundled-server-dll>, --stdio]`
-- `enableLanguageClientBridge = true`
-- `enableBridgeForVisualBasic = true`
-- `enableBridgeForCSharp = false`
-
-This is designed to be install-and-go (no manual preset command required).
-
-If no bundled server is available in a dev scenario, bootstrap falls back to the companion server project (`dotnet run --project ... -- --stdio`) when present.
-
-If the configured server points to the bundled C# extension Roslyn executable, or if the path does not exist on disk, the extension auto-disables bridge startup to prevent LSP error loops. The Linux Roslyn executable (no `.exe` suffix) is also detected and blocked correctly.
-
-Manual override (optional):
-
-1. Set `vbnetcompanion.enableLanguageClientBridge` to `true`.
-2. Provide a server command in `vbnetcompanion.languageClientServerCommand`.
-3. Optionally add arguments in `vbnetcompanion.languageClientServerArgs`.
-
-When configured, the extension starts a `vscode-languageclient` instance targeting both `csharp` and `vb` documents.
-
-`VB.NET Companion: Apply Roslyn Bridge Preset` provides a guided setup flow that:
-
-- Prompts for a local Roslyn server executable path
-- Seeds common bridge args (`--stdio` by default)
-- Enables the bridge and sets trace level to `messages`
-- Restarts the bridge from updated settings
-
-`VB.NET Companion: Check Language Client Bridge Compatibility` validates the configured bridge server path and offers quick actions when the setup is incompatible.
-
-The companion server source lives in:
-
-- `server/VBNetCompanion.LanguageServer`
-
-## Development
-
-Install dependencies (already run during scaffolding):
-
-- `npm install`
-
-Build:
-
-- `npm run compile`
-
-Watch mode:
-
-- `npm run watch`
-
-Run tests:
-
-- `npm test`
-
-## Quick Manual Test Workspace
-
-Use `test-workspace` for a fast manual check of parity commands.
-
-Included files:
-
-- `test-workspace/Sample.cs`
-- `test-workspace/Sample.vb`
-
-Manual flow:
-
-1. Press `F5` to launch an Extension Development Host.
-2. In that new window, open the `test-workspace` folder.
-3. Run `VB.NET Companion: Show .NET Language Parity Status`.
-4. Run `VB.NET Companion: Remediate VB.NET Parity Gaps`.
-5. Inspect output channel `VB.NET Companion` and status bar parity state.
-
-## Troubleshooting
-
-### Test host says “Code is currently being updated”
-
-If `npm test` fails with that message on Windows, a VS Code updater process is usually still running.
-
-Quick fix:
-
-1. Close all VS Code windows.
-2. Wait for update/setup processes to complete (or end `CodeSetup-stable-*` in Task Manager).
-3. Run `npm test` again.
-
-## Next Milestones
-
-1. Add richer parity diagnostics that map each failing feature to concrete remediation guidance.
-2. Introduce telemetry/metrics hooks (opt-in) to track parity trend over time across workspaces.
-3. Expand test coverage with integration-style probes for C# and VB.NET documents.
+- VS Code 1.109.0 or later
+- [C# Dev Kit](https://marketplace.visualstudio.com/items?itemName=ms-dotnettools.csdevkit) or [C# extension](https://marketplace.visualstudio.com/items?itemName=ms-dotnettools.csharp) (recommended for C# side of parity checks)
+- .NET SDK installed and on `PATH`
