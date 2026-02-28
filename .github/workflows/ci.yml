@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  # ─── TypeScript extension ──────────────────────────────────────────────────
+  extension:
+    name: Extension (Node.js)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run check-types
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build (dev)
+        run: node esbuild.js
+
+  # ─── .NET language server ──────────────────────────────────────────────────
+  server:
+    name: Language Server (.NET)
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.x"
+
+      - name: Restore NuGet packages
+        run: dotnet restore ./server/VBNetCompanion.LanguageServer/VBNetCompanion.LanguageServer.csproj
+
+      - name: Build (Debug)
+        run: dotnet build ./server/VBNetCompanion.LanguageServer/VBNetCompanion.LanguageServer.csproj -c Debug --no-restore
+
+      - name: Publish (Release, win-x64)
+        run: >
+          dotnet publish
+          ./server/VBNetCompanion.LanguageServer/VBNetCompanion.LanguageServer.csproj
+          -c Release -r win-x64 --self-contained false
+          -o ./server/VBNetCompanion.LanguageServer/publish

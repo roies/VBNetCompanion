@@ -8,3 +8,24 @@ server/VBNetCompanion.LanguageServer/obj/
 server/VBNetCompanion.LanguageServer/publish/
 test-workspace/**/bin/
 test-workspace/**/obj/
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# OS-generated
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs
+*.log
+npm-debug.log*
