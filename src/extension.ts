@@ -544,11 +544,23 @@ function shouldApplyCompanionBootstrap(
 	_bridgeEnabled: boolean,
 	_bridgeForVisualBasic: boolean,
 	_bridgeForCSharp: boolean,
-	_companionServerLaunch: CompanionServerLaunch
+	companionServerLaunch: CompanionServerLaunch
 ): boolean {
-	// Only auto-bootstrap if no compatible server command has been configured.
-	// Respect any existing user configuration to avoid silently overwriting deliberate choices.
-	return !existingServerCommand || !existingServerCompatible;
+	// No command configured or the configured command is no longer valid.
+	if (!existingServerCommand || !existingServerCompatible) {
+		return true;
+	}
+
+	// The existing command points to a companion server from an older extension version.
+	// Always update to the current extension's server so published fixes take effect automatically.
+	const normalizedExisting = existingServerCommand.replace(/\\/g, '/').toLowerCase();
+	const normalizedCurrent = companionServerLaunch.command.replace(/\\/g, '/').toLowerCase();
+	const isCompanionPath = normalizedExisting.includes('roies.vbnet-companion-');
+	if (isCompanionPath && normalizedExisting !== normalizedCurrent) {
+		return true;
+	}
+
+	return false;
 }
 
 function areArgsEqual(left: string[], right: string[]): boolean {

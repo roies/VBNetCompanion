@@ -8,6 +8,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.5] - 2026-02-28
+
+### Fixed
+
+- **Extension updates never took effect**: the auto-bootstrap only ran once per workspace. After the initial setup it stored a `roies.vbnet-companion-0.1.0` server path in workspace settings and never updated it, so all fixes in v0.1.1–v0.1.4 were silently bypassed. The bootstrap now detects when the configured server path points to an older companion extension version and automatically redirects to the current extension's server binary.
+
 ## [0.1.4] - 2026-02-28
 
 ### Fixed
