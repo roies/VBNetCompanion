@@ -13,6 +13,7 @@ export type BridgeCompatibility = {
 
 export class DotnetLanguageClientBridge {
 	private client: LanguageClient | undefined;
+	private isRestarting = false;
 
 	constructor(private readonly outputChannel: vscode.OutputChannel) {}
 
@@ -121,14 +122,29 @@ export class DotnetLanguageClientBridge {
 
 			fallbackClient.setTrace(this.toTrace(traceLevel, Trace));
 			this.client = fallbackClient;
-			await fallbackClient.start();
-			this.outputChannel.appendLine(`[Bridge] Started language client bridge with fallback command: ${fallback.command}`);
+			try {
+				await fallbackClient.start();
+				this.outputChannel.appendLine(`[Bridge] Started language client bridge with fallback command: ${fallback.command}`);
+			} catch (fallbackError) {
+				const primaryMsg = error instanceof Error ? error.message : String(error);
+				const fallbackMsg = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+				this.outputChannel.appendLine(`[Bridge] Fallback also failed: ${fallbackMsg}`);
+				throw new Error(`Bridge startup failed. Primary: ${primaryMsg}. Fallback: ${fallbackMsg}`);
+			}
 		}
 	}
 
 	public async restartFromConfiguration(): Promise<void> {
-		await this.stop();
-		await this.startFromConfiguration();
+		if (this.isRestarting) {
+			return;
+		}
+		this.isRestarting = true;
+		try {
+			await this.stop();
+			await this.startFromConfiguration();
+		} finally {
+			this.isRestarting = false;
+		}
 	}
 
 	public async stop(): Promise<void> {
@@ -226,6 +242,15 @@ export function assessBridgeServerCompatibility(commandPath: string): BridgeComp
 		};
 	}
 
+	const resolvedCommand = commandPath.trim();
+	if (resolvedCommand.toLowerCase() !== 'dotnet' && !fs.existsSync(resolvedCommand)) {
+		return {
+			isCompatible: false,
+			message: `Configured server command does not exist at the specified path: ${resolvedCommand}`,
+			hint: 'Verify the path in vsextensionforvb.languageClientServerCommand or use the Apply Roslyn Bridge Preset command.'
+		};
+	}
+
 	return {
 		isCompatible: true,
 		message: 'Configured server path passed basic compatibility checks.'
@@ -234,5 +259,9 @@ export function assessBridgeServerCompatibility(commandPath: string): BridgeComp
 
 function isBundledCSharpRoslynPath(commandPath: string): boolean {
 	const normalized = commandPath.replace(/\\/g, '/').toLowerCase();
-	return normalized.includes('/.vscode/extensions/ms-dotnettools.csharp-') && normalized.endsWith('/microsoft.codeanalysis.languageserver.exe');
+	if (!normalized.includes('/.vscode/extensions/ms-dotnettools.csharp-')) {
+		return false;
+	}
+	return normalized.endsWith('/microsoft.codeanalysis.languageserver.exe') ||
+		normalized.endsWith('/microsoft.codeanalysis.languageserver');
 }

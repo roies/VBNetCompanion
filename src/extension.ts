@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { buildParityReport, getParityGaps, runDotnetParityProbe } from './parityProbe';
+import { buildParityReport, getParityGaps, runDotnetParityProbe, type LanguageProbeSummary } from './parityProbe';
 import { assessBridgeServerCompatibility, DotnetLanguageClientBridge } from './languageClientBridge';
 
 let languageClientBridge: DotnetLanguageClientBridge | undefined;
@@ -50,7 +50,7 @@ export function activate(context: vscode.ExtensionContext) {
 		outputChannel.clear();
 		outputChannel.appendLine(report);
 		outputChannel.show(true);
-		await executeParityStatusRefresh();
+		await executeParityStatusRefresh(probeSummaries);
 		void vscode.window.showInformationMessage(message);
 	});
 
@@ -68,7 +68,7 @@ export function activate(context: vscode.ExtensionContext) {
 		outputChannel.show(true);
 
 		if (parityGaps.length === 0) {
-			await executeParityStatusRefresh();
+		await executeParityStatusRefresh(probeSummaries);
 			void vscode.window.showInformationMessage('No VB.NET parity gaps were detected against C# in the latest probe run.');
 			return;
 		}
@@ -99,7 +99,7 @@ export function activate(context: vscode.ExtensionContext) {
 				break;
 		}
 
-		await executeParityStatusRefresh();
+		await executeParityStatusRefresh(probeSummaries);
 	});
 
 	const restartDotnetLanguageServicesCommand = vscode.commands.registerCommand('vsextensionforvb.restartDotnetLanguageServices', async () => {
@@ -238,8 +238,16 @@ export function activate(context: vscode.ExtensionContext) {
 		scheduleParityStatusRefresh();
 	};
 
-	context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(triggerStatusRefresh));
-	context.subscriptions.push(vscode.workspace.onDidOpenTextDocument(triggerStatusRefresh));
+	context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor((editor) => {
+		if (editor && /\.(cs|vb)$/i.test(editor.document.fileName)) {
+			triggerStatusRefresh();
+		}
+	}));
+	context.subscriptions.push(vscode.workspace.onDidOpenTextDocument((doc) => {
+		if (/\.(cs|vb)$/i.test(doc.fileName)) {
+			triggerStatusRefresh();
+		}
+	}));
 	context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event) => {
 		if (event.affectsConfiguration('vsextensionforvb')) {
 			triggerStatusRefresh();
@@ -256,11 +264,11 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	}));
 
-	function scheduleParityStatusRefresh(delayMs = 300): void {
+	function scheduleParityStatusRefresh(delayMs?: number): void {
 		const config = vscode.workspace.getConfiguration('vsextensionforvb');
 		const configuredDelay = config.get<number>('statusRefreshDelayMs', 300);
 		const effectiveDelay = Math.min(5000, Math.max(50, Math.trunc(configuredDelay ?? 300)));
-		const resolvedDelay = delayMs === 300 ? effectiveDelay : delayMs;
+		const resolvedDelay = delayMs ?? effectiveDelay;
 
 		if (refreshTimer) {
 			clearTimeout(refreshTimer);
@@ -271,7 +279,7 @@ export function activate(context: vscode.ExtensionContext) {
 		}, resolvedDelay);
 	}
 
-	async function executeParityStatusRefresh(): Promise<void> {
+	async function executeParityStatusRefresh(preComputedSummaries?: LanguageProbeSummary[]): Promise<void> {
 		if (refreshInFlight) {
 			refreshQueued = true;
 			return;
@@ -279,7 +287,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 		refreshInFlight = true;
 		try {
-			await refreshParityStatusBar();
+			await refreshParityStatusBar(preComputedSummaries);
 		} finally {
 			refreshInFlight = false;
 			if (refreshQueued) {
@@ -289,7 +297,7 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	}
 
-	async function refreshParityStatusBar(): Promise<void> {
+	async function refreshParityStatusBar(preComputedSummaries?: LanguageProbeSummary[]): Promise<void> {
 		const config = vscode.workspace.getConfiguration('vsextensionforvb');
 		const enableForCSharp = config.get<boolean>('enableForCSharp', true);
 		const enableForVisualBasic = config.get<boolean>('enableForVisualBasic', true);
@@ -307,7 +315,7 @@ export function activate(context: vscode.ExtensionContext) {
 		parityStatusBarItem.tooltip = `Running parity probe... Language server: ${preferredLanguageServer}. Refresh debounce: ${effectiveDelay}ms.`;
 
 		try {
-			const summaries = await runDotnetParityProbe(enableForCSharp, enableForVisualBasic);
+			const summaries = preComputedSummaries ?? await runDotnetParityProbe(enableForCSharp, enableForVisualBasic);
 			const vbGaps = getParityGaps(summaries).filter((gap) => gap.direction === 'vb_missing_vs_csharp');
 			if (vbGaps.length === 0) {
 				parityStatusBarItem.text = '$(check) VB parity: OK';
@@ -531,30 +539,16 @@ function detectRoslynServerCommandPath(): string | undefined {
 
 function shouldApplyCompanionBootstrap(
 	existingServerCommand: string,
-	existingServerArgs: string[],
+	_existingServerArgs: string[],
 	existingServerCompatible: boolean,
-	bridgeEnabled: boolean,
-	bridgeForVisualBasic: boolean,
-	bridgeForCSharp: boolean,
-	companionServerLaunch: CompanionServerLaunch
+	_bridgeEnabled: boolean,
+	_bridgeForVisualBasic: boolean,
+	_bridgeForCSharp: boolean,
+	_companionServerLaunch: CompanionServerLaunch
 ): boolean {
-	if (!existingServerCommand || !existingServerCompatible) {
-		return true;
-	}
-
-	if (existingServerCommand !== companionServerLaunch.command) {
-		return true;
-	}
-
-	if (!areArgsEqual(existingServerArgs, companionServerLaunch.args)) {
-		return true;
-	}
-
-	if (!bridgeEnabled || !bridgeForVisualBasic || bridgeForCSharp) {
-		return true;
-	}
-
-	return false;
+	// Only auto-bootstrap if no compatible server command has been configured.
+	// Respect any existing user configuration to avoid silently overwriting deliberate choices.
+	return !existingServerCommand || !existingServerCompatible;
 }
 
 function areArgsEqual(left: string[], right: string[]): boolean {
@@ -672,14 +666,6 @@ function detectCompanionServerLaunch(context: vscode.ExtensionContext): Companio
 		for (const candidate of candidateExePaths) {
 			if (fs.existsSync(candidate)) {
 				const siblingDllPath = candidate.replace(/\.exe$/i, '.dll');
-				if (fs.existsSync(siblingDllPath)) {
-					try {
-						fs.rmSync(siblingDllPath);
-					} catch {
-						// Keep launch resilient even if cleanup fails.
-					}
-				}
-
 				return {
 					command: candidate,
 					args: ['--stdio'],

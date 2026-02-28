@@ -18,6 +18,20 @@ export type LanguageProbeSummary = {
 
 const FEATURE_ORDER: FeatureName[] = ['definition', 'completion', 'references', 'rename', 'codeActions'];
 
+const PROBE_TIMEOUT_MS = 5000;
+
+const probeDocumentCache = new Map<DotnetLanguage, vscode.Uri>();
+
+function withTimeout<T>(thenable: Thenable<T>, ms: number): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const timer = setTimeout(() => reject(new Error(`Probe timed out after ${ms}ms`)), ms);
+		thenable.then(
+			(value) => { clearTimeout(timer); resolve(value); },
+			(error: unknown) => { clearTimeout(timer); reject(error); }
+		);
+	});
+}
+
 export type ParityGap = {
 	feature: FeatureName;
 	direction: 'vb_missing_vs_csharp' | 'csharp_missing_vs_vb';
@@ -26,17 +40,17 @@ export type ParityGap = {
 };
 
 export async function runDotnetParityProbe(enableCSharp: boolean, enableVb: boolean): Promise<LanguageProbeSummary[]> {
-	const summaries: LanguageProbeSummary[] = [];
+	const probes: Promise<LanguageProbeSummary>[] = [];
 
 	if (enableCSharp) {
-		summaries.push(await probeLanguage('csharp'));
+		probes.push(probeLanguage('csharp'));
 	}
 
 	if (enableVb) {
-		summaries.push(await probeLanguage('vb'));
+		probes.push(probeLanguage('vb'));
 	}
 
-	return summaries;
+	return Promise.all(probes);
 }
 
 export function buildParityReport(summaries: LanguageProbeSummary[]): string {
@@ -95,10 +109,13 @@ export function getParityGaps(summaries: LanguageProbeSummary[]): ParityGap[] {
 		return [];
 	}
 
+	const csharpByFeature = new Map(csharp.results.map((r) => [r.feature, r]));
+	const vbByFeature = new Map(vb.results.map((r) => [r.feature, r]));
+
 	const gaps: ParityGap[] = [];
 	for (const feature of FEATURE_ORDER) {
-		const csharpFeature = csharp.results.find((item) => item.feature === feature);
-		const vbFeature = vb.results.find((item) => item.feature === feature);
+		const csharpFeature = csharpByFeature.get(feature);
+		const vbFeature = vbByFeature.get(feature);
 		if (!csharpFeature || !vbFeature) {
 			continue;
 		}
@@ -128,12 +145,13 @@ async function probeLanguage(language: DotnetLanguage): Promise<LanguageProbeSum
 	const position = selectProbePosition(document);
 	const range = new vscode.Range(position, position);
 
-	const results: FeatureProbeResult[] = [];
-	results.push(await probeDefinition(document.uri, position));
-	results.push(await probeCompletion(document.uri, position));
-	results.push(await probeReferences(document.uri, position));
-	results.push(await probeRename(document.uri, position));
-	results.push(await probeCodeActions(document.uri, range));
+	const results = await Promise.all([
+		probeDefinition(document.uri, position),
+		probeCompletion(document.uri, position),
+		probeReferences(document.uri, position),
+		probeRename(document.uri, position),
+		probeCodeActions(document.uri, range)
+	]);
 
 	return {
 		language,
@@ -144,11 +162,11 @@ async function probeLanguage(language: DotnetLanguage): Promise<LanguageProbeSum
 
 async function probeDefinition(uri: vscode.Uri, position: vscode.Position): Promise<FeatureProbeResult> {
 	try {
-		const result = await vscode.commands.executeCommand<(vscode.Location | vscode.LocationLink)[]>(
+		const result = await withTimeout(vscode.commands.executeCommand<(vscode.Location | vscode.LocationLink)[]>(
 			'vscode.executeDefinitionProvider',
 			uri,
 			position
-		);
+		), PROBE_TIMEOUT_MS);
 		const count = result?.length ?? 0;
 		return {
 			feature: 'definition',
@@ -162,13 +180,13 @@ async function probeDefinition(uri: vscode.Uri, position: vscode.Position): Prom
 
 async function probeCompletion(uri: vscode.Uri, position: vscode.Position): Promise<FeatureProbeResult> {
 	try {
-		const result = await vscode.commands.executeCommand<vscode.CompletionList>(
+		const result = await withTimeout(vscode.commands.executeCommand<vscode.CompletionList>(
 			'vscode.executeCompletionItemProvider',
 			uri,
 			position,
 			'.',
 			20
-		);
+		), PROBE_TIMEOUT_MS);
 		const count = result?.items.length ?? 0;
 		return {
 			feature: 'completion',
@@ -182,11 +200,11 @@ async function probeCompletion(uri: vscode.Uri, position: vscode.Position): Prom
 
 async function probeReferences(uri: vscode.Uri, position: vscode.Position): Promise<FeatureProbeResult> {
 	try {
-		const result = await vscode.commands.executeCommand<vscode.Location[]>(
+		const result = await withTimeout(vscode.commands.executeCommand<vscode.Location[]>(
 			'vscode.executeReferenceProvider',
 			uri,
 			position
-		);
+		), PROBE_TIMEOUT_MS);
 		const count = result?.length ?? 0;
 		return {
 			feature: 'references',
@@ -200,12 +218,12 @@ async function probeReferences(uri: vscode.Uri, position: vscode.Position): Prom
 
 async function probeRename(uri: vscode.Uri, position: vscode.Position): Promise<FeatureProbeResult> {
 	try {
-		const result = await vscode.commands.executeCommand<vscode.WorkspaceEdit>(
+		const result = await withTimeout(vscode.commands.executeCommand<vscode.WorkspaceEdit>(
 			'vscode.executeDocumentRenameProvider',
 			uri,
 			position,
 			'parityProbeRenamedSymbol'
-		);
+		), PROBE_TIMEOUT_MS);
 		const hasChanges = !!result && workspaceEditHasChanges(result);
 		return {
 			feature: 'rename',
@@ -219,11 +237,11 @@ async function probeRename(uri: vscode.Uri, position: vscode.Position): Promise<
 
 async function probeCodeActions(uri: vscode.Uri, range: vscode.Range): Promise<FeatureProbeResult> {
 	try {
-		const result = await vscode.commands.executeCommand<(vscode.Command | vscode.CodeAction)[]>(
+		const result = await withTimeout(vscode.commands.executeCommand<(vscode.Command | vscode.CodeAction)[]>(
 			'vscode.executeCodeActionProvider',
 			uri,
 			range
-		);
+		), PROBE_TIMEOUT_MS);
 		const count = result?.length ?? 0;
 		return {
 			feature: 'codeActions',
@@ -236,10 +254,27 @@ async function probeCodeActions(uri: vscode.Uri, range: vscode.Range): Promise<F
 }
 
 async function getOrCreateProbeDocument(language: DotnetLanguage): Promise<vscode.TextDocument> {
+	// Always prefer a real workspace file over a cached synthetic document.
 	const glob = language === 'csharp' ? '**/*.cs' : '**/*.vb';
 	const existing = await vscode.workspace.findFiles(glob, '**/{bin,obj,node_modules,.git}/**', 1);
 	if (existing.length > 0) {
+		// Invalidate synthetic cache entry now that a real file is available.
+		if (probeDocumentCache.has(language)) {
+			const cached = probeDocumentCache.get(language)!;
+			if (cached.toString() !== existing[0].toString()) {
+				probeDocumentCache.delete(language);
+			}
+		}
 		return vscode.workspace.openTextDocument(existing[0]);
+	}
+
+	const cachedUri = probeDocumentCache.get(language);
+	if (cachedUri) {
+		try {
+			return await vscode.workspace.openTextDocument(cachedUri);
+		} catch {
+			probeDocumentCache.delete(language);
+		}
 	}
 
 	const content = language === 'csharp'
@@ -262,13 +297,25 @@ async function getOrCreateProbeDocument(language: DotnetLanguage): Promise<vscod
 			'End Class'
 		].join('\n');
 
-	return vscode.workspace.openTextDocument({
+	const doc = await vscode.workspace.openTextDocument({
 		language,
 		content
 	});
+	probeDocumentCache.set(language, doc.uri);
+	return doc;
 }
 
 function selectProbePosition(document: vscode.TextDocument): vscode.Position {
+	// Prefer a known local identifier to avoid probing on keywords.
+	for (let lineIndex = 0; lineIndex < document.lineCount; lineIndex++) {
+		const line = document.lineAt(lineIndex).text;
+		const identifierIndex = line.indexOf('localValue');
+		if (identifierIndex >= 0) {
+			return new vscode.Position(lineIndex, identifierIndex);
+		}
+	}
+
+	// Fallback: first non-whitespace character in the document.
 	for (let lineIndex = 0; lineIndex < document.lineCount; lineIndex++) {
 		const line = document.lineAt(lineIndex).text;
 		const firstNonWhitespace = line.search(/\S/);
@@ -281,11 +328,8 @@ function selectProbePosition(document: vscode.TextDocument): vscode.Position {
 }
 
 function workspaceEditHasChanges(edit: vscode.WorkspaceEdit): boolean {
-	for (const [uri, edits] of edit.entries()) {
+	for (const [, edits] of edit.entries()) {
 		if (edits.length > 0) {
-			return true;
-		}
-		if (edit.get(uri).length > 0) {
 			return true;
 		}
 	}
