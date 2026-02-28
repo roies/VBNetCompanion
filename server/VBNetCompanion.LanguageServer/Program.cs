@@ -119,14 +119,14 @@ while (true)
 							),
 							["tokenModifiers"] = new JsonArray("static", "readonly", "declaration")
 						}
+					},
+					["hoverProvider"] = true,
+					["documentSymbolProvider"] = true,
+					["documentHighlightProvider"] = true,
+					["signatureHelpProvider"] = new JsonObject
+					{
+						["triggerCharacters"] = new JsonArray("(", ",")
 					}
-				},
-				["hoverProvider"] = true,
-				["documentSymbolProvider"] = true,
-				["documentHighlightProvider"] = true,
-				["signatureHelpProvider"] = new JsonObject
-				{
-					["triggerCharacters"] = new JsonArray("(", ",")
 				},
 				["serverInfo"] = new JsonObject
 				{
@@ -682,15 +682,32 @@ async Task<JsonNode?> HandleHoverAsync(JsonElement requestRoot, ConcurrentDictio
 	if (context is null) return null;
 
 	var doc = context.Value.Document;
-	if (TryReadUri(requestRoot, out var hoverUri) && documents.TryGetValue(hoverUri, out var liveText))
-		doc = doc.WithText(SourceText.From(liveText, Encoding.UTF8));
+	var position = context.Value.Position;
 
-	var symbol = await ResolveSymbolAtPositionAsync(doc, context.Value.Position);
-	if (symbol is null) return null;
+	// Apply live text and recompute position against it so hover works even while editing.
+	if (TryReadPosition(requestRoot, out var hoverUri, out var hoverLine, out var hoverChar)
+		&& documents.TryGetValue(hoverUri, out var liveText))
+	{
+		var liveSourceText = SourceText.From(liveText, Encoding.UTF8);
+		doc = doc.WithText(liveSourceText);
+		if (hoverLine >= 0 && hoverLine < liveSourceText.Lines.Count)
+		{
+			var safeChar = Math.Clamp(hoverChar, 0, liveSourceText.Lines[hoverLine].Span.Length);
+			position = liveSourceText.Lines.GetPosition(new LinePosition(hoverLine, safeChar));
+		}
+	}
 
+	var symbol = await ResolveSymbolAtPositionAsync(doc, position);
+	if (symbol is null)
+	{
+		await LogAsync("Hover: no symbol at position");
+		return null;
+	}
+
+	await LogAsync($"Hover: symbol '{symbol.Name}' ({symbol.Kind})");
 	var sb = new StringBuilder();
 	var display = symbol.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat);
-	sb.AppendLine("```");
+	sb.AppendLine("```vb");
 	sb.AppendLine(display);
 	sb.AppendLine("```");
 
@@ -951,6 +968,7 @@ async Task<JsonNode?> HandleSignatureHelpAsync(JsonElement requestRoot, Concurre
 
 		// Resolve the symbol at the position just before '('.
 		var symPosition = Math.Max(0, callPos - 1);
+		await LogAsync($"SignatureHelp: callPos={callPos} activeParam={activeParam} symPosition={symPosition}");
 		var symbol = await ResolveSymbolAtPositionAsync(roslynDoc, symPosition);
 
 		IEnumerable<IMethodSymbol> methods = symbol switch

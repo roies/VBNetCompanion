@@ -8,6 +8,13 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.11] - 2026-02-28
+
+### Fixed
+
+- **Hover and Signature Help were not activating**: the `hoverProvider`, `documentSymbolProvider`, `documentHighlightProvider`, and `signatureHelpProvider` capabilities were accidentally placed as siblings of `capabilities` in the `initialize` response rather than inside it. VS Code never received them, so it never sent the corresponding requests.
+- **Hover position mismatch with live edits**: hover now recomputes the character offset against the live in-memory text buffer instead of the on-disk snapshot, so it correctly resolves symbols while you are editing.
+
 ## [0.1.10] - 2026-02-28
 
 ### Fixed
