@@ -8,6 +8,14 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.23] - 2026-03-01
+
+### Fixed
+
+- **MSBuild SDK version mismatch causing project load failures**: `TryFindMSBuildPath()` was selecting the newest SDK (e.g., .NET 10), but the language server targets net8.0. The .NET 10 SDK's `WorkloadManifestReader` calls APIs absent from .NET 8 (`MissingMethodException`), causing cascading project failures. Now prefers SDKs matching the server's major version (8.x), falling back to the latest only when necessary.
+- **No user notification for workspace load failures**: hundreds of `WorkspaceDiag` warnings were logged but never surfaced. Added `SummarizeWorkspaceLoadIssuesAsync()` that categorises failures (SDK resolver errors, missing references, other) and sends a `window/showMessage` warning with actionable guidance.
+- **VB.NET code actions returning nothing when projects fail to load**: when Roslyn can't resolve a document (project load failed), `HandleCodeActionAsync` now provides text-based fallback code actions ("Comment out line", "Wrap in region") instead of an empty response.
+
 ## [0.1.22] - 2026-02-28
 
 ### Fixed

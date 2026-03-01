@@ -2532,6 +2532,13 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 			if (msbuildPath is not null)
 			{
 				await LogAsync($"Registering MSBuild from: {msbuildPath}");
+				// Warn if the selected SDK doesn't match the server's runtime major version.
+				var sdkDirName = Path.GetFileName(msbuildPath.TrimEnd(Path.DirectorySeparatorChar));
+				if (Version.TryParse(sdkDirName.Split('-')[0], out var selectedSdkVersion) && selectedSdkVersion.Major != 8)
+				{
+					await LogAsync($"Warning: Selected SDK {sdkDirName} (major {selectedSdkVersion.Major}) differs from server runtime (net8.0). " +
+						"This may cause MissingMethodException errors. Install a .NET 8.x SDK for best compatibility.", 2);
+				}
 				MSBuildLocator.RegisterMSBuildPath(msbuildPath);
 			}
 			else
@@ -2557,6 +2564,7 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 				roslynWorkspace = workspace;
 				foreach (var f in workspaceFailures) await LogAsync($"WorkspaceDiag: {f}", 2);
 				await LogAsync($"Roslyn solution loaded: {solutionPath} ({roslynSolution.Projects.Count()} projects)");
+				await SummarizeWorkspaceLoadIssuesAsync(workspaceFailures);
 				return;
 			}
 			catch (Exception ex)
@@ -2642,6 +2650,7 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 		roslynSolution = workspace.CurrentSolution;
 		foreach (var f in workspaceFailures) await LogAsync($"WorkspaceDiag: {f}", 2);
 		await LogAsync($"Roslyn projects loaded: {roslynSolution?.Projects.Count() ?? 0} project(s)");
+		await SummarizeWorkspaceLoadIssuesAsync(workspaceFailures);
 	}
 	catch (Exception ex)
 	{
@@ -2652,6 +2661,58 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 	finally
 	{
 		workspaceLoadGate.Release();
+	}
+}
+
+async Task SummarizeWorkspaceLoadIssuesAsync(ConcurrentBag<string> failures)
+{
+	if (failures.IsEmpty) return;
+
+	var failureList = failures.ToList();
+	var sdkResolverFailures = failureList.Count(f => f.Contains("SdkResolverFailure", StringComparison.OrdinalIgnoreCase)
+		|| f.Contains("MissingMethodException", StringComparison.OrdinalIgnoreCase)
+		|| f.Contains("SDK Resolver Failure", StringComparison.OrdinalIgnoreCase));
+	var missingRefWarnings = failureList.Count(f => f.Contains("without a matching metadata reference", StringComparison.OrdinalIgnoreCase));
+	var otherFailures = failureList.Count - sdkResolverFailures - missingRefWarnings;
+
+	var parts = new List<string>();
+
+	if (sdkResolverFailures > 0)
+	{
+		parts.Add($"{sdkResolverFailures} MSBuild SDK resolver failure(s) — this usually means the installed .NET SDK version is incompatible with the language server runtime. " +
+			"Install a .NET 8 SDK or ensure the server targets a framework matching your SDK.");
+	}
+
+	if (missingRefWarnings > 0)
+	{
+		parts.Add($"{missingRefWarnings} project reference(s) could not be resolved. Cross-project navigation and IntelliSense may be degraded.");
+	}
+
+	if (otherFailures > 0)
+	{
+		parts.Add($"{otherFailures} other workspace diagnostic(s).");
+	}
+
+	if (parts.Count == 0) return;
+
+	var summary = $"Workspace loaded with issues: {string.Join(" ", parts)}";
+	await LogAsync(summary, sdkResolverFailures > 0 ? 1 : 2);
+
+	// Send a user-visible notification for critical issues.
+	if (sdkResolverFailures > 0)
+	{
+		var notification = new JsonObject
+		{
+			["jsonrpc"] = JsonRpcVersion,
+			["method"] = "window/showMessage",
+			["params"] = new JsonObject
+			{
+				["type"] = 2, // Warning
+				["message"] = $"VB.NET Companion: {sdkResolverFailures} project(s) failed to load due to .NET SDK version mismatch. " +
+					"Install a .NET 8.x SDK for full compatibility, or check the output channel for details."
+			}
+		};
+		await SendAsync(notification);
 	}
 }
 
@@ -3054,8 +3115,14 @@ static async Task<string?> ReadHeaderLineAsync(Stream input)
 
 static string? TryFindMSBuildPath()
 {
-	// Try to find the latest .NET SDK by running `dotnet --list-sdks`.
+	// Try to find the best .NET SDK by running `dotnet --list-sdks`.
+	// We strongly prefer an SDK whose major version matches the server's target
+	// framework (net8.0 → major 8) to avoid System.Text.Json / MSBuild version
+	// mismatches that cause MissingMethodException at runtime.  If no matching
+	// major-version SDK is available we fall back to the latest installed one.
 	// Format: "10.0.102 [C:\Program Files\dotnet\sdk]"
+	const int serverMajorVersion = 8; // must match TargetFramework in .csproj
+
 	try
 	{
 		var process = new System.Diagnostics.Process
@@ -3073,8 +3140,10 @@ static string? TryFindMSBuildPath()
 		var output = process.StandardOutput.ReadToEnd();
 		process.WaitForExit(5000);
 
-		var bestPath = (string?)null;
-		var bestVersion = (Version?)null;
+		string? bestCompatiblePath = null;
+		Version? bestCompatibleVersion = null;
+		string? bestFallbackPath = null;
+		Version? bestFallbackVersion = null;
 
 		foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
 		{
@@ -3091,14 +3160,26 @@ static string? TryFindMSBuildPath()
 			if (!Directory.Exists(sdkPath)) continue;
 			if (!Version.TryParse(versionStr.Split('-')[0], out var version)) continue;
 
-			if (bestVersion is null || version > bestVersion)
+			if (version.Major == serverMajorVersion)
 			{
-				bestVersion = version;
-				bestPath = sdkPath;
+				if (bestCompatibleVersion is null || version > bestCompatibleVersion)
+				{
+					bestCompatibleVersion = version;
+					bestCompatiblePath = sdkPath;
+				}
+			}
+			else
+			{
+				if (bestFallbackVersion is null || version > bestFallbackVersion)
+				{
+					bestFallbackVersion = version;
+					bestFallbackPath = sdkPath;
+				}
 			}
 		}
 
-		return bestPath;
+		// Prefer the compatible SDK; fall back to the latest available.
+		return bestCompatiblePath ?? bestFallbackPath;
 	}
 	catch
 	{
@@ -3477,7 +3558,17 @@ async Task<JsonNode> HandleCodeActionAsync(JsonElement requestRoot, ConcurrentDi
 
 	var docId = roslynSolution.GetDocumentIdsWithFilePath(filePath).FirstOrDefault();
 	var roslynDoc = docId is not null ? roslynSolution.GetDocument(docId) : null;
-	if (roslynDoc is null) return actions;
+	if (roslynDoc is null)
+	{
+		// Roslyn couldn't resolve this document (project may have failed to load).
+		// Offer basic text-based code actions so the user isn't left with nothing.
+		if (documents.TryGetValue(uri, out var rawText) && !string.IsNullOrEmpty(rawText))
+		{
+			var isVbFallback = filePath.EndsWith(".vb", StringComparison.OrdinalIgnoreCase);
+			AppendFallbackCodeActions(actions, uri, rawText, startLine, isVbFallback);
+		}
+		return actions;
+	}
 
 	if (documents.TryGetValue(uri, out var liveText))
 		roslynDoc = roslynDoc.WithText(SourceText.From(liveText, Encoding.UTF8));
@@ -3707,6 +3798,70 @@ static int SymbolToLspKind(ISymbol sym) => sym switch{
 	INamespaceSymbol                                      => 3,
 	_                                                     => 13
 };
+
+// ─── Fallback Code Actions (text-based, no Roslyn project needed) ─────────────
+void AppendFallbackCodeActions(JsonArray actions, string uri, string text, int cursorLine, bool isVb)
+{
+	var lines = text.Split('\n');
+	if (cursorLine >= lines.Length) return;
+
+	var lineText = lines[cursorLine];
+	var indent = new string(' ', lineText.Length - lineText.TrimStart().Length);
+
+	// Offer to comment out the current line
+	var commentPrefix = isVb ? "' " : "// ";
+	var trimmedLine = lineText.TrimStart();
+	if (!trimmedLine.StartsWith(commentPrefix.TrimEnd()) && trimmedLine.Length > 0)
+	{
+		actions.Add(new JsonObject
+		{
+			["title"] = "Comment out line",
+			["kind"] = "quickfix",
+			["edit"] = new JsonObject
+			{
+				["changes"] = new JsonObject
+				{
+					[uri] = new JsonArray
+					{
+						new JsonObject
+						{
+							["range"] = CreateRange(cursorLine, 0, cursorLine, lineText.TrimEnd('\r').Length),
+							["newText"] = $"{indent}{commentPrefix}{trimmedLine.TrimEnd('\r')}"
+						}
+					}
+				}
+			}
+		});
+	}
+
+	// Offer to add a Region around the selection
+	var regionStart = isVb ? $"{indent}#Region \"Region\"" : $"{indent}#region Region";
+	var regionEnd = isVb ? $"{indent}#End Region" : $"{indent}#endregion";
+	actions.Add(new JsonObject
+	{
+		["title"] = "Wrap in region",
+		["kind"] = "refactor",
+		["edit"] = new JsonObject
+		{
+			["changes"] = new JsonObject
+			{
+				[uri] = new JsonArray
+				{
+					new JsonObject
+					{
+						["range"] = CreateRange(cursorLine, 0, cursorLine, 0),
+						["newText"] = $"{regionStart}{Environment.NewLine}"
+					},
+					new JsonObject
+					{
+						["range"] = CreateRange(cursorLine + 1, 0, cursorLine + 1, 0),
+						["newText"] = $"{regionEnd}{Environment.NewLine}"
+					}
+				}
+			}
+		}
+	});
+}
 
 // ─── Formatting ───────────────────────────────────────────────────────────────
 async Task<JsonNode> HandleFormattingAsync(JsonElement requestRoot, ConcurrentDictionary<string, string> documents, (int startLine, int startChar, int endLine, int endChar)? range)
