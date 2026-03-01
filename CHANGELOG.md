@@ -8,6 +8,11 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.32]
+
+- **fix:** CodeLens reference counts no longer duplicate on C# files. Our server now skips CodeLens for `.cs` files since C# Dev Kit already provides reference counting there.
+- **fix:** Stronger RuntimeIdentifier suppression via a temporary MSBuild override file injected through `CustomBeforeMicrosoftCommonTargets` / `CustomBeforeMicrosoftCommonProps` env vars. This is auto-imported by MSBuild during project evaluation — including inside Roslyn's out-of-process BuildHost — and prevents the .NET 10 SDK from injecting `RuntimeIdentifier=win` into projects that don't list it.
+
 ## [0.1.31]
 
 - **fix:** Set `UseCurrentRuntimeIdentifier=false`, `RuntimeIdentifier=""`, and related environment variables **before** MSBuild loads, so they are inherited by Roslyn's out-of-process BuildHost. Global properties on `MSBuildWorkspace.Create()` were confirmed not to propagate to BuildHost child processes in Roslyn 5.0.0; environment variables bypass this limitation.

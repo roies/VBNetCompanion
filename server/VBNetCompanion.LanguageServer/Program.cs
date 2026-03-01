@@ -1707,6 +1707,13 @@ async Task<JsonNode> HandleCodeLensAsync(JsonElement requestRoot, ConcurrentDict
 		return new JsonArray();
 	}
 
+	// Skip CodeLens for C# files — C# Dev Kit already provides reference counts.
+	// Our server only adds CodeLens for VB.NET files where no other provider exists.
+	if (TryGetFilePathFromUri(uri, out var lensPath) && lensPath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+	{
+		return new JsonArray();
+	}
+
 	// Try to resolve the Roslyn document for cross-project reference counting.
 	await EnsureRoslynWorkspaceLoadedAsync(forceReload: false);
 	Document? roslynDoc = null;
@@ -2534,17 +2541,32 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 
 		if (!MSBuildLocator.IsRegistered)
 		{
-			// Set environment variables BEFORE MSBuild assemblies are loaded.
-			// Global properties on MSBuildWorkspace.Create() may not propagate to
-			// Roslyn's out-of-process BuildHost. Environment variables are inherited
-			// by child processes and will be seen as low-priority MSBuild properties.
-			// The .NET SDK sets UseCurrentRuntimeIdentifier only when the property is
-			// empty, so an env-var value of "false" prevents the SDK from overriding it.
+			// Write a temporary MSBuild override file and inject it via the
+			// CustomBeforeMicrosoftCommonTargets env-var.  This is more reliable
+			// than plain env-var properties because MSBuild explicitly imports
+			// the file during project evaluation — including inside Roslyn's
+			// out-of-process BuildHost, which may not map env-vars to MSBuild
+			// properties the same way the in-process engine does.
+			var overridePropsPath = Path.Combine(
+				Path.GetTempPath(),
+				$"VBNetCompanion_{Environment.ProcessId}_rid_override.props");
+			File.WriteAllText(overridePropsPath, @"<Project>
+  <PropertyGroup>
+    <UseCurrentRuntimeIdentifier>false</UseCurrentRuntimeIdentifier>
+    <RuntimeIdentifier />
+  </PropertyGroup>
+</Project>");
+			Environment.SetEnvironmentVariable("CustomBeforeMicrosoftCommonTargets", overridePropsPath);
+			Environment.SetEnvironmentVariable("CustomBeforeMicrosoftCommonProps", overridePropsPath);
+
+			// Belt-and-suspenders: also set the properties directly as env vars
+			// so they are visible as low-priority MSBuild properties.
 			Environment.SetEnvironmentVariable("UseCurrentRuntimeIdentifier", "false");
 			Environment.SetEnvironmentVariable("RuntimeIdentifier", "");
 			Environment.SetEnvironmentVariable("NETCoreSdkRuntimeIdentifier", "");
 			Environment.SetEnvironmentVariable("NETCoreSdkPortableRuntimeIdentifier", "");
 			Environment.SetEnvironmentVariable("DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER", "1");
+			await LogAsync($"MSBuild RID override file: {overridePropsPath}");
 
 			var msbuildPath = TryFindMSBuildPath();
 			if (msbuildPath is not null)
