@@ -1707,6 +1707,13 @@ async Task<JsonNode> HandleCodeLensAsync(JsonElement requestRoot, ConcurrentDict
 		return new JsonArray();
 	}
 
+	// Skip CodeLens for C# files — C# Dev Kit already provides reference counts
+	// and producing our own results in a duplicate ("0 | 0") display.
+	if (TryGetFilePathFromUri(uri, out var lensPath) && lensPath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+	{
+		return new JsonArray();
+	}
+
 	// Try to resolve the Roslyn document for cross-project reference counting.
 	await EnsureRoslynWorkspaceLoadedAsync(forceReload: false);
 	Document? roslynDoc = null;
@@ -2552,13 +2559,14 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 			var tempDir = Path.GetTempPath();
 			var pid = Environment.ProcessId;
 
+			// The override only disables UseCurrentRuntimeIdentifier and clears
+			// RuntimeIdentifier.  We must NOT clear NETCoreSdkRuntimeIdentifier
+			// because the ProcessFrameworkReferences task requires it.
 			var overridePropsPath = Path.Combine(tempDir, $"VBNetCompanion_{pid}_rid_override.props");
 			File.WriteAllText(overridePropsPath, @"<Project>
   <PropertyGroup>
     <UseCurrentRuntimeIdentifier>false</UseCurrentRuntimeIdentifier>
     <RuntimeIdentifier />
-    <NETCoreSdkRuntimeIdentifier />
-    <NETCoreSdkPortableRuntimeIdentifier />
   </PropertyGroup>
 </Project>");
 
@@ -2567,9 +2575,6 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
   <PropertyGroup>
     <UseCurrentRuntimeIdentifier>false</UseCurrentRuntimeIdentifier>
     <RuntimeIdentifier />
-    <NETCoreSdkRuntimeIdentifier />
-    <NETCoreSdkPortableRuntimeIdentifier />
-    <SelfContained>false</SelfContained>
   </PropertyGroup>
 </Project>");
 
@@ -2579,8 +2584,6 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 			// Belt-and-suspenders: also set the properties directly as env vars.
 			Environment.SetEnvironmentVariable("UseCurrentRuntimeIdentifier", "false");
 			Environment.SetEnvironmentVariable("RuntimeIdentifier", "");
-			Environment.SetEnvironmentVariable("NETCoreSdkRuntimeIdentifier", "");
-			Environment.SetEnvironmentVariable("NETCoreSdkPortableRuntimeIdentifier", "");
 			Environment.SetEnvironmentVariable("DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER", "1");
 			await LogAsync($"MSBuild RID override: props={overridePropsPath}  targets={overrideTargetsPath}");
 

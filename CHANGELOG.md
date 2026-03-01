@@ -8,6 +8,11 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.34]
+
+- **fix:** Stopped clearing `NETCoreSdkRuntimeIdentifier` and `NETCoreSdkPortableRuntimeIdentifier` in the MSBuild override files. The `ProcessFrameworkReferences` task requires `NETCoreSdkRuntimeIdentifier` to have a value; clearing it caused a build failure that broke the entire Roslyn workspace. The override now only sets `UseCurrentRuntimeIdentifier=false` and clears `RuntimeIdentifier`.
+- **fix:** CodeLens for C# files is skipped again to avoid duplicate "0 references | 0 references" display when C# Dev Kit is also installed.
+
 ## [0.1.33]
 
 - **fix:** Re-enabled CodeLens reference counts for C# files. C# Dev Kit's CodeLens can show 0 references incorrectly; our Roslyn-based CodeLens provides accurate counts for both C# and VB.NET.
