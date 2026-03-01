@@ -141,6 +141,21 @@ export function getParityGaps(summaries: LanguageProbeSummary[]): ParityGap[] {
 }
 
 async function probeLanguage(language: DotnetLanguage): Promise<LanguageProbeSummary> {
+	const document = await getOrCreateProbeDocument(language);
+
+	// If no workspace file was found, return an empty result without opening anything.
+	if (!document) {
+		return {
+			language,
+			documentUri: vscode.Uri.parse(`untitled:probe-skipped-${language}`),
+			results: FEATURE_ORDER.map(feature => ({
+				feature,
+				available: false,
+				detail: `No ${language === 'csharp' ? '.cs' : '.vb'} file found in workspace`
+			}))
+		};
+	}
+
 	// Snapshot currently open tabs so we can close any the probe opens.
 	const tabsBefore = new Set(
 		vscode.window.tabGroups.all.flatMap(g => g.tabs).map(t =>
@@ -148,8 +163,6 @@ async function probeLanguage(language: DotnetLanguage): Promise<LanguageProbeSum
 		).filter((u): u is string => !!u)
 	);
 
-	const document = await getOrCreateProbeDocument(language);
-	const isSynthetic = document.uri.scheme === 'untitled';
 	const position = selectProbePosition(document);
 	const range = new vscode.Range(position, position);
 
@@ -161,24 +174,11 @@ async function probeLanguage(language: DotnetLanguage): Promise<LanguageProbeSum
 		probeCodeActions(document.uri, range)
 	]);
 
-	// Close any tabs the probe opened — both synthetic (untitled) and real files
-	// that were not visible before. For untitled docs, revert first to avoid
-	// the "Save?" confirm dialog.
-	const docUriStr = document.uri.toString();
+	// Close any tabs the probe opened that were not visible before.
 	for (const tab of vscode.window.tabGroups.all.flatMap(g => g.tabs)) {
 		if (!(tab.input instanceof vscode.TabInputText)) { continue; }
 		const tabUri = tab.input.uri.toString();
-
-		// Always close the probe document's tab (synthetic or newly opened real file).
-		// Also close any other untitled tabs that appeared during probing.
-		const isProbeDoc = tabUri === docUriStr;
-		const isNewTab = !tabsBefore.has(tabUri);
-		if (!isProbeDoc && !isNewTab) { continue; }
-
-		if (tab.input.uri.scheme === 'untitled' && tab.isDirty) {
-			// Revert the untitled document so VS Code won't prompt "Save?".
-			await vscode.commands.executeCommand('workbench.action.files.revert', tab.input.uri).then(undefined, () => {/* ignore */});
-		}
+		if (tabsBefore.has(tabUri)) { continue; }
 		await vscode.window.tabGroups.close(tab).then(undefined, () => {/* ignore */});
 	}
 
@@ -282,7 +282,7 @@ async function probeCodeActions(uri: vscode.Uri, range: vscode.Range): Promise<F
 	}
 }
 
-async function getOrCreateProbeDocument(language: DotnetLanguage): Promise<vscode.TextDocument> {
+async function getOrCreateProbeDocument(language: DotnetLanguage): Promise<vscode.TextDocument | undefined> {
 	// Always prefer a real workspace file over a cached synthetic document.
 	// Search for several candidates and prefer non-designer / non-generated files.
 	const glob = language === 'csharp' ? '**/*.cs' : '**/*.vb';
@@ -295,51 +295,14 @@ async function getOrCreateProbeDocument(language: DotnetLanguage): Promise<vscod
 		const preferred = existing.filter(uri => !isDesignerOrGenerated(uri));
 		const chosen = preferred.length > 0 ? preferred[0] : existing[0];
 
-		// Invalidate synthetic cache entry now that a real file is available.
-		if (probeDocumentCache.has(language)) {
-			const cached = probeDocumentCache.get(language)!;
-			if (cached.toString() !== chosen.toString()) {
-				probeDocumentCache.delete(language);
-			}
-		}
+		probeDocumentCache.delete(language); // real files always win
 		return vscode.workspace.openTextDocument(chosen);
 	}
 
-	const cachedUri = probeDocumentCache.get(language);
-	if (cachedUri) {
-		try {
-			return await vscode.workspace.openTextDocument(cachedUri);
-		} catch {
-			probeDocumentCache.delete(language);
-		}
-	}
-
-	const content = language === 'csharp'
-		? [
-			'class ProbeClass',
-			'{',
-			'    void TestMethod()',
-			'    {',
-			'        int localValue = 1;',
-			'        localValue.ToString();',
-			'    }',
-			'}'
-		].join('\n')
-		: [
-			'Class ProbeClass',
-			'    Sub TestMethod()',
-			'        Dim localValue As Integer = 1',
-			'        localValue.ToString()',
-			'    End Sub',
-			'End Class'
-		].join('\n');
-
-	const doc = await vscode.workspace.openTextDocument({
-		language,
-		content
-	});
-	probeDocumentCache.set(language, doc.uri);
-	return doc;
+	// No workspace files found for this language — return undefined.
+	// We deliberately do NOT create synthetic untitled documents because
+	// they appear as visible tabs and trigger "Save?" confirm dialogs.
+	return undefined;
 }
 
 function selectProbePosition(document: vscode.TextDocument): vscode.Position {

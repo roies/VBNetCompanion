@@ -2489,8 +2489,9 @@ async Task<(Document Document, int Position, Solution Solution)?> TryResolveRosl
 	var documentId = roslynSolution.GetDocumentIdsWithFilePath(filePath).FirstOrDefault();
 	if (documentId is null)
 	{
+		var totalDocs = roslynSolution.Projects.Sum(p => p.Documents.Count());
 		var projectNames = string.Join(", ", roslynSolution.Projects.Select(p => p.Name));
-		await LogAsync($"Definition: file not found in Roslyn solution (projects: {projectNames}) — {filePath}", 2);
+		await LogAsync($"Definition: file not found in Roslyn solution ({totalDocs} total docs, projects: {projectNames}) — {filePath}", 2);
 		return null;
 	}
 
@@ -2533,6 +2534,18 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 
 		if (!MSBuildLocator.IsRegistered)
 		{
+			// Set environment variables BEFORE MSBuild assemblies are loaded.
+			// Global properties on MSBuildWorkspace.Create() may not propagate to
+			// Roslyn's out-of-process BuildHost. Environment variables are inherited
+			// by child processes and will be seen as low-priority MSBuild properties.
+			// The .NET SDK sets UseCurrentRuntimeIdentifier only when the property is
+			// empty, so an env-var value of "false" prevents the SDK from overriding it.
+			Environment.SetEnvironmentVariable("UseCurrentRuntimeIdentifier", "false");
+			Environment.SetEnvironmentVariable("RuntimeIdentifier", "");
+			Environment.SetEnvironmentVariable("NETCoreSdkRuntimeIdentifier", "");
+			Environment.SetEnvironmentVariable("NETCoreSdkPortableRuntimeIdentifier", "");
+			Environment.SetEnvironmentVariable("DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER", "1");
+
 			var msbuildPath = TryFindMSBuildPath();
 			if (msbuildPath is not null)
 			{
@@ -2585,7 +2598,17 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 				roslynSolution = await workspace.OpenSolutionAsync(solutionPath);
 				roslynWorkspace = workspace;
 				foreach (var f in workspaceFailures) await LogAsync($"WorkspaceDiag: {f}", 2);
-				await LogAsync($"Roslyn solution loaded: {solutionPath} ({roslynSolution.Projects.Count()} projects)");
+
+				// Log document counts per project to diagnose whether source files were loaded.
+				var totalDocs = 0;
+				var emptyProjects = 0;
+				foreach (var proj in roslynSolution.Projects)
+				{
+					var docCount = proj.Documents.Count();
+					totalDocs += docCount;
+					if (docCount == 0) emptyProjects++;
+				}
+				await LogAsync($"Roslyn solution loaded: {solutionPath} ({roslynSolution.Projects.Count()} projects, {totalDocs} documents, {emptyProjects} empty project(s))");
 				await SummarizeWorkspaceLoadIssuesAsync(workspaceFailures);
 				return;
 			}

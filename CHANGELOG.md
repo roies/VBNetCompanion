@@ -8,6 +8,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.31]
+
+- **fix:** Set `UseCurrentRuntimeIdentifier=false`, `RuntimeIdentifier=""`, and related environment variables **before** MSBuild loads, so they are inherited by Roslyn's out-of-process BuildHost. Global properties on `MSBuildWorkspace.Create()` were confirmed not to propagate to BuildHost child processes in Roslyn 5.0.0; environment variables bypass this limitation.
+- **fix:** Probe no longer creates synthetic untitled documents. If no real `.cs`/`.vb` file exists in the workspace, the probe returns an empty result instead of opening an untitled `ProbeClass` tab that triggers "Save?" dialogs.
+- **diag:** Log total document count, empty-project count, and per-request document counts after Roslyn workspace load for easier troubleshooting.
+
 ## [0.1.30]
 
 - **fix:** Probe documents no longer appear as visible tabs or trigger "Save?" confirm dialogs. Untitled docs are reverted before closing; real workspace files opened during probing are automatically cleaned up.
