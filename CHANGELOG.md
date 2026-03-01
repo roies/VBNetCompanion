@@ -8,6 +8,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.29] - 2026-03-01
+
+### Fixed
+
+- **Massive project load failures with .NET 10 SDK (`RuntimeIdentifier` errors)**: `MSBuildWorkspace.Create()` was called without global properties, causing MSBuild to apply the host platform's default runtime evaluation. On .NET 10 SDK, this injected `RuntimeIdentifier` checks into old .NET Framework projects that don't list `win` in their `RuntimeIdentifiers`, producing hundreds of cascading failures ("Your project file doesn't list 'win' as a RuntimeIdentifier"). Now configures MSBuildWorkspace with design-time build properties (`DesignTimeBuild=true`, `BuildingInsideVisualStudio=true`, `SkipCompilerExecution=true`) matching what Visual Studio and OmniSharp use for IDE evaluation, producing a more forgiving and accurate project load.
+
 ## [0.1.28] - 2026-03-01
 
 ### Fixed

@@ -2554,7 +2554,19 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 			}
 		}
 
-		var workspace = MSBuildWorkspace.Create();
+		// Configure MSBuildWorkspace with design-time build properties.
+		// This mirrors what Visual Studio / OmniSharp use for IDE evaluation and prevents
+		// false failures such as "Your project file doesn't list 'win' as a RuntimeIdentifier"
+		// that occur when MSBuild applies the host platform's default RID to old .NET Framework projects.
+		var workspaceProperties = new Dictionary<string, string>
+		{
+			{ "DesignTimeBuild", "true" },
+			{ "BuildingInsideVisualStudio", "true" },
+			{ "SkipCompilerExecution", "true" },
+			{ "ProvideCommandLineArgs", "true" },
+			{ "ShouldUnsetParentConfigurationAndPlatform", "false" },
+		};
+		var workspace = MSBuildWorkspace.Create(workspaceProperties);
 		var workspaceFailures = new ConcurrentBag<string>();
 		workspace.RegisterWorkspaceFailedHandler(e => workspaceFailures.Add($"[{e.Diagnostic.Kind}] {e.Diagnostic.Message}"));
 
