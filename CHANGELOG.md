@@ -8,6 +8,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.28] - 2026-03-01
+
+### Fixed
+
+- **Synthetic `ProbeClass` document left open as a visible tab**: when no real workspace `.cs` or `.vb` file is found (or `findFiles` returns empty before workspace indexing completes), the parity probe creates an untitled in-memory document containing `ProbeClass`. This document was never closed, leaving a confusing untitled tab in the customer's editor. Now automatically closes synthetic (untitled) probe documents after probing completes.
+
 ## [0.1.27] - 2026-03-01
 
 ### Fixed

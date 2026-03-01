@@ -142,6 +142,7 @@ export function getParityGaps(summaries: LanguageProbeSummary[]): ParityGap[] {
 
 async function probeLanguage(language: DotnetLanguage): Promise<LanguageProbeSummary> {
 	const document = await getOrCreateProbeDocument(language);
+	const isSynthetic = document.uri.scheme === 'untitled';
 	const position = selectProbePosition(document);
 	const range = new vscode.Range(position, position);
 
@@ -152,6 +153,16 @@ async function probeLanguage(language: DotnetLanguage): Promise<LanguageProbeSum
 		probeRename(document.uri, position),
 		probeCodeActions(document.uri, range)
 	]);
+
+	// Close synthetic (untitled) probe documents so they don't appear as open tabs.
+	if (isSynthetic) {
+		for (const tab of vscode.window.tabGroups.all.flatMap(g => g.tabs)) {
+			if (tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === document.uri.toString()) {
+				await vscode.window.tabGroups.close(tab).then(undefined, () => {/* ignore */});
+				break;
+			}
+		}
+	}
 
 	return {
 		language,
