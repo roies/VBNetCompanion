@@ -8,6 +8,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.33]
+
+- **fix:** Re-enabled CodeLens reference counts for C# files. C# Dev Kit's CodeLens can show 0 references incorrectly; our Roslyn-based CodeLens provides accurate counts for both C# and VB.NET.
+- **fix:** Split MSBuild RID override into TWO files: a `.props` file (via `CustomBeforeMicrosoftCommonProps`, runs early) and a `.targets` file (via `CustomAfterMicrosoftCommonTargets`, runs AFTER the .NET 10 SDK's `RuntimeIdentifierInference.targets`). The v0.1.32 props-only approach was imported too early — the SDK's inference targets ran later and overrode our properties. The targets file now clears `RuntimeIdentifier` and related properties AFTER the SDK has set them.
+- **diag:** Log when `TryResolveRoslynContextAsync` returns null for a definition request, to help diagnose F12 failures.
+
 ## [0.1.32]
 
 - **fix:** CodeLens reference counts no longer duplicate on C# files. Our server now skips CodeLens for `.cs` files since C# Dev Kit already provides reference counting there.
