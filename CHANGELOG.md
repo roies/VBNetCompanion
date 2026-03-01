@@ -8,6 +8,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.27] - 2026-03-01
+
+### Fixed
+
+- **Bridge starts old server version after extension update (race condition)**: during bootstrap, each sequential `config.update()` fired `onDidChangeConfiguration` before subsequent settings (like the server command path) were written. The config handler's `restartFromConfiguration()` read the **old** `languageClientServerCommand` (e.g. v0.1.22 path) while the bootstrap was still writing the new path (v0.1.26). Added a `bridgeBootstrapPending` guard that suppresses config-change-triggered bridge restarts until bootstrap completes and all settings are written, then starts the bridge exactly once with the correct values.
+
 ## [0.1.26] - 2026-03-01
 
 ### Fixed

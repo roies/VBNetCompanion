@@ -5,6 +5,7 @@ import { buildParityReport, getParityGaps, runDotnetParityProbe, type LanguagePr
 import { assessBridgeServerCompatibility, DotnetLanguageClientBridge } from './languageClientBridge';
 
 let languageClientBridge: DotnetLanguageClientBridge | undefined;
+let bridgeBootstrapPending = true;
 const ROSLYN_BRIDGE_BOOTSTRAP_KEY = 'vbnetcompanion.roslynBridgeBootstrapCompleted';
 
 export function activate(context: vscode.ExtensionContext) {
@@ -23,7 +24,10 @@ export function activate(context: vscode.ExtensionContext) {
 	let refreshQueued = false;
 	void promptForMissingDotnetTooling();
 	void autoBootstrapRoslynBridge(context, outputChannel)
-		.finally(() => languageClientBridge?.startFromConfiguration());
+		.finally(async () => {
+			bridgeBootstrapPending = false;
+			await languageClientBridge?.startFromConfiguration();
+		});
 	scheduleParityStatusRefresh(0);
 
 	const showParityStatusCommand = vscode.commands.registerCommand('vbnetcompanion.showParityStatus', async () => {
@@ -296,7 +300,9 @@ export function activate(context: vscode.ExtensionContext) {
 				event.affectsConfiguration('vbnetcompanion.languageClientServerArgs') ||
 				event.affectsConfiguration('vbnetcompanion.languageClientTraceLevel')
 			) {
-				void languageClientBridge?.restartFromConfiguration();
+				if (!bridgeBootstrapPending) {
+					void languageClientBridge?.restartFromConfiguration();
+				}
 			}
 		}
 	}));
