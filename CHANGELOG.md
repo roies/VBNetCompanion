@@ -8,6 +8,13 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.24] - 2026-03-01
+
+### Fixed
+
+- **Server crash on machines with only .NET 10+ runtime (exit code 1)**: the language server was published as framework-dependent targeting `net8.0` with no roll-forward policy. On machines without .NET 8 runtime, the exe failed immediately. Added `<RollForward>LatestMajor</RollForward>` to the project so the server runs on any .NET 8+ runtime.
+- **SDK version detection now matches actual runtime**: `TryFindMSBuildPath()` used a hardcoded major version `8`. Now uses `Environment.Version.Major` to match the SDK to whichever runtime is actually executing, preventing MSBuild/runtime mismatches after roll-forward.
+
 ## [0.1.23] - 2026-03-01
 
 ### Fixed

@@ -2534,10 +2534,11 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 				await LogAsync($"Registering MSBuild from: {msbuildPath}");
 				// Warn if the selected SDK doesn't match the server's runtime major version.
 				var sdkDirName = Path.GetFileName(msbuildPath.TrimEnd(Path.DirectorySeparatorChar));
-				if (Version.TryParse(sdkDirName.Split('-')[0], out var selectedSdkVersion) && selectedSdkVersion.Major != 8)
+				var runtimeMajor = Environment.Version.Major;
+				if (Version.TryParse(sdkDirName.Split('-')[0], out var selectedSdkVersion) && selectedSdkVersion.Major != runtimeMajor)
 				{
-					await LogAsync($"Warning: Selected SDK {sdkDirName} (major {selectedSdkVersion.Major}) differs from server runtime (net8.0). " +
-						"This may cause MissingMethodException errors. Install a .NET 8.x SDK for best compatibility.", 2);
+					await LogAsync($"Warning: Selected SDK {sdkDirName} (major {selectedSdkVersion.Major}) differs from server runtime (major {runtimeMajor}). " +
+						"This may cause MissingMethodException errors.", 2);
 				}
 				MSBuildLocator.RegisterMSBuildPath(msbuildPath);
 			}
@@ -3116,12 +3117,12 @@ static async Task<string?> ReadHeaderLineAsync(Stream input)
 static string? TryFindMSBuildPath()
 {
 	// Try to find the best .NET SDK by running `dotnet --list-sdks`.
-	// We strongly prefer an SDK whose major version matches the server's target
-	// framework (net8.0 → major 8) to avoid System.Text.Json / MSBuild version
-	// mismatches that cause MissingMethodException at runtime.  If no matching
-	// major-version SDK is available we fall back to the latest installed one.
+	// We strongly prefer an SDK whose major version matches the server's actual
+	// running runtime to avoid System.Text.Json / MSBuild version mismatches
+	// that cause MissingMethodException at runtime.  If no matching major-version
+	// SDK is available we fall back to the latest installed one.
 	// Format: "10.0.102 [C:\Program Files\dotnet\sdk]"
-	const int serverMajorVersion = 8; // must match TargetFramework in .csproj
+	var runtimeMajorVersion = Environment.Version.Major;
 
 	try
 	{
@@ -3160,7 +3161,7 @@ static string? TryFindMSBuildPath()
 			if (!Directory.Exists(sdkPath)) continue;
 			if (!Version.TryParse(versionStr.Split('-')[0], out var version)) continue;
 
-			if (version.Major == serverMajorVersion)
+			if (version.Major == runtimeMajorVersion)
 			{
 				if (bestCompatibleVersion is null || version > bestCompatibleVersion)
 				{
