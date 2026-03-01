@@ -26,6 +26,7 @@ var workspaceLoadGate = new SemaphoreSlim(1, 1);
 var outputGate = new SemaphoreSlim(1, 1);
 MSBuildWorkspace? roslynWorkspace = null;
 Solution? roslynSolution = null;
+Solution? codeLensProjectRefsLogged = null;
 
 async Task SendAsync(JsonObject message)
 {
@@ -1707,20 +1708,18 @@ async Task<JsonNode> HandleCodeLensAsync(JsonElement requestRoot, ConcurrentDict
 		return new JsonArray();
 	}
 
-	// Skip CodeLens for C# files — C# Dev Kit already provides reference counts
-	// and producing our own results in a duplicate ("0 | 0") display.
-	if (TryGetFilePathFromUri(uri, out var lensPath) && lensPath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
-	{
-		return new JsonArray();
-	}
-
 	// Try to resolve the Roslyn document for cross-project reference counting.
 	await EnsureRoslynWorkspaceLoadedAsync(forceReload: false);
+
+	// Use the workspace's live solution to pick up any post-load updates
+	// (e.g. project reference resolution, document text changes).
+	var currentSolution = roslynWorkspace?.CurrentSolution ?? roslynSolution;
+
 	Document? roslynDoc = null;
-	if (roslynSolution is not null && TryGetFilePathFromUri(uri, out var codeLensFilePath))
+	if (currentSolution is not null && TryGetFilePathFromUri(uri, out var codeLensFilePath))
 	{
-		var docId = roslynSolution.GetDocumentIdsWithFilePath(codeLensFilePath).FirstOrDefault();
-		roslynDoc = docId is not null ? roslynSolution.GetDocument(docId) : null;
+		var docId = currentSolution.GetDocumentIdsWithFilePath(codeLensFilePath).FirstOrDefault();
+		roslynDoc = docId is not null ? currentSolution.GetDocument(docId) : null;
 	}
 
 	if (!documents.TryGetValue(uri, out var sourceText))
@@ -1732,10 +1731,22 @@ async Task<JsonNode> HandleCodeLensAsync(JsonElement requestRoot, ConcurrentDict
 
 	// Roslyn-first path: enumerate declared symbols directly via the semantic model.
 	// This handles both C# and VB without language-specific regex.
-	if (roslynDoc is not null && roslynSolution is not null)
+	if (roslynDoc is not null && currentSolution is not null)
 	{
 		try
 		{
+			// Log project references once per solution to help diagnose cross-project issues.
+			if (codeLensProjectRefsLogged is null || codeLensProjectRefsLogged != currentSolution)
+			{
+				codeLensProjectRefsLogged = currentSolution;
+				foreach (var proj in currentSolution.Projects)
+				{
+					var projRefNames = string.Join(", ",
+						proj.ProjectReferences.Select(r => currentSolution.GetProject(r.ProjectId)?.Name ?? "?"));
+					await LogAsync($"CodeLens: Project '{proj.Name}' — projRefs=[{projRefNames}], metaRefs={proj.MetadataReferences.Count}, docs={proj.Documents.Count()}");
+				}
+			}
+
 			var syntaxRoot = await roslynDoc.GetSyntaxRootAsync();
 			var semanticModel = await roslynDoc.GetSemanticModelAsync();
 			var docText = await roslynDoc.GetTextAsync();
@@ -1758,7 +1769,7 @@ async Task<JsonNode> HandleCodeLensAsync(JsonElement requestRoot, ConcurrentDict
 				var spanStart = docText.Lines.GetLinePosition(symbolLoc.SourceSpan.Start);
 				var spanEnd = docText.Lines.GetLinePosition(symbolLoc.SourceSpan.End);
 
-				var refs = await SymbolFinder.FindReferencesAsync(symbol, roslynSolution);
+				var refs = await SymbolFinder.FindReferencesAsync(symbol, currentSolution);
 				var refCount = 0;
 				var refLocations = new JsonArray();
 				foreach (var refSym in refs)
@@ -1769,6 +1780,8 @@ async Task<JsonNode> HandleCodeLensAsync(JsonElement requestRoot, ConcurrentDict
 						refLocations.Add(CreateLocationNode(refLoc.Location));
 					}
 				}
+
+				await LogAsync($"CodeLens: FindReferencesAsync('{symbol.Name}') → {refCount} locations");
 
 				var title = refCount == 1 ? "1 reference" : $"{refCount} references";
 				roslynLenses.Add(new JsonObject
@@ -2484,7 +2497,8 @@ async Task<(Document Document, int Position, Solution Solution)?> TryResolveRosl
 	}
 
 	await EnsureRoslynWorkspaceLoadedAsync(forceReload: false);
-	if (roslynSolution is null)
+	var solution = roslynWorkspace?.CurrentSolution ?? roslynSolution;
+	if (solution is null)
 	{
 		return null;
 	}
@@ -2494,16 +2508,16 @@ async Task<(Document Document, int Position, Solution Solution)?> TryResolveRosl
 		return null;
 	}
 
-	var documentId = roslynSolution.GetDocumentIdsWithFilePath(filePath).FirstOrDefault();
+	var documentId = solution.GetDocumentIdsWithFilePath(filePath).FirstOrDefault();
 	if (documentId is null)
 	{
-		var totalDocs = roslynSolution.Projects.Sum(p => p.Documents.Count());
-		var projectNames = string.Join(", ", roslynSolution.Projects.Select(p => p.Name));
+		var totalDocs = solution.Projects.Sum(p => p.Documents.Count());
+		var projectNames = string.Join(", ", solution.Projects.Select(p => p.Name));
 		await LogAsync($"Definition: file not found in Roslyn solution ({totalDocs} total docs, projects: {projectNames}) — {filePath}", 2);
 		return null;
 	}
 
-	var document = roslynSolution.GetDocument(documentId);
+	var document = solution.GetDocument(documentId);
 	if (document is null)
 	{
 		return null;
@@ -2517,7 +2531,7 @@ async Task<(Document Document, int Position, Solution Solution)?> TryResolveRosl
 
 	var safeCharacter = Math.Clamp(character, 0, text.Lines[line].Span.Length);
 	var position = text.Lines.GetPosition(new LinePosition(line, safeCharacter));
-	return (document, position, roslynSolution);
+	return (document, position, solution);
 }
 
 async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
