@@ -141,6 +141,13 @@ export function getParityGaps(summaries: LanguageProbeSummary[]): ParityGap[] {
 }
 
 async function probeLanguage(language: DotnetLanguage): Promise<LanguageProbeSummary> {
+	// Snapshot currently open tabs so we can close any the probe opens.
+	const tabsBefore = new Set(
+		vscode.window.tabGroups.all.flatMap(g => g.tabs).map(t =>
+			t.input instanceof vscode.TabInputText ? t.input.uri.toString() : undefined
+		).filter((u): u is string => !!u)
+	);
+
 	const document = await getOrCreateProbeDocument(language);
 	const isSynthetic = document.uri.scheme === 'untitled';
 	const position = selectProbePosition(document);
@@ -154,14 +161,25 @@ async function probeLanguage(language: DotnetLanguage): Promise<LanguageProbeSum
 		probeCodeActions(document.uri, range)
 	]);
 
-	// Close synthetic (untitled) probe documents so they don't appear as open tabs.
-	if (isSynthetic) {
-		for (const tab of vscode.window.tabGroups.all.flatMap(g => g.tabs)) {
-			if (tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === document.uri.toString()) {
-				await vscode.window.tabGroups.close(tab).then(undefined, () => {/* ignore */});
-				break;
-			}
+	// Close any tabs the probe opened — both synthetic (untitled) and real files
+	// that were not visible before. For untitled docs, revert first to avoid
+	// the "Save?" confirm dialog.
+	const docUriStr = document.uri.toString();
+	for (const tab of vscode.window.tabGroups.all.flatMap(g => g.tabs)) {
+		if (!(tab.input instanceof vscode.TabInputText)) { continue; }
+		const tabUri = tab.input.uri.toString();
+
+		// Always close the probe document's tab (synthetic or newly opened real file).
+		// Also close any other untitled tabs that appeared during probing.
+		const isProbeDoc = tabUri === docUriStr;
+		const isNewTab = !tabsBefore.has(tabUri);
+		if (!isProbeDoc && !isNewTab) { continue; }
+
+		if (tab.input.uri.scheme === 'untitled' && tab.isDirty) {
+			// Revert the untitled document so VS Code won't prompt "Save?".
+			await vscode.commands.executeCommand('workbench.action.files.revert', tab.input.uri).then(undefined, () => {/* ignore */});
 		}
+		await vscode.window.tabGroups.close(tab).then(undefined, () => {/* ignore */});
 	}
 
 	return {

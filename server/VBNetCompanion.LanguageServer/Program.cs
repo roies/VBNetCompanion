@@ -2565,6 +2565,10 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 			{ "SkipCompilerExecution", "true" },
 			{ "ProvideCommandLineArgs", "true" },
 			{ "ShouldUnsetParentConfigurationAndPlatform", "false" },
+			// Clear RuntimeIdentifier to prevent .NET 10+ SDK from auto-injecting
+			// the host RID (e.g. "win") into projects that were not restored with it.
+			{ "RuntimeIdentifier", "" },
+			{ "UseCurrentRuntimeIdentifier", "false" },
 		};
 		var workspace = MSBuildWorkspace.Create(workspaceProperties);
 		var workspaceFailures = new ConcurrentBag<string>();

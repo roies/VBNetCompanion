@@ -8,6 +8,11 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.30]
+
+- **fix:** Probe documents no longer appear as visible tabs or trigger "Save?" confirm dialogs. Untitled docs are reverted before closing; real workspace files opened during probing are automatically cleaned up.
+- **fix:** Explicitly clear `RuntimeIdentifier` and set `UseCurrentRuntimeIdentifier=false` in MSBuildWorkspace properties to prevent .NET 10+ SDK from injecting the host RID (`win`) into projects that were not restored with it.
+
 ## [0.1.29] - 2026-03-01
 
 ### Fixed
