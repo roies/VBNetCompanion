@@ -1072,8 +1072,13 @@ async Task<JsonNode> HandleDocumentSymbolAsync(JsonElement requestRoot, Concurre
 				l.IsInSource && string.Equals(l.SourceTree?.FilePath, filePath, StringComparison.OrdinalIgnoreCase));
 			if (loc is null) continue;
 
-			var spanStart = docText.Lines.GetLinePosition(loc.SourceSpan.Start);
-			var spanEnd   = docText.Lines.GetLinePosition(loc.SourceSpan.End);
+			// Use the full syntax-node span for "range" (the whole declaration)
+			// and the identifier span (loc.SourceSpan) for "selectionRange".
+			// This guarantees selectionRange ⊆ range, which VS Code requires.
+			var nodeStart = docText.Lines.GetLinePosition(node.Span.Start);
+			var nodeEnd   = docText.Lines.GetLinePosition(node.Span.End);
+			var selStart  = docText.Lines.GetLinePosition(loc.SourceSpan.Start);
+			var selEnd    = docText.Lines.GetLinePosition(loc.SourceSpan.End);
 
 			var kind = sym switch
 			{
@@ -1096,8 +1101,8 @@ async Task<JsonNode> HandleDocumentSymbolAsync(JsonElement requestRoot, Concurre
 			{
 				["name"]           = sym.Name,
 				["kind"]           = kind,
-				["range"]          = CreateRange(spanStart.Line, spanStart.Character, spanEnd.Line, spanEnd.Character),
-				["selectionRange"] = CreateRange(spanStart.Line, spanStart.Character, spanStart.Line, spanStart.Character + sym.Name.Length)
+				["range"]          = CreateRange(nodeStart.Line, nodeStart.Character, nodeEnd.Line, nodeEnd.Character),
+				["selectionRange"] = CreateRange(selStart.Line, selStart.Character, selEnd.Line, selEnd.Character)
 			});
 		}
 
@@ -2551,7 +2556,7 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 
 		var workspace = MSBuildWorkspace.Create();
 		var workspaceFailures = new ConcurrentBag<string>();
-		workspace.WorkspaceFailed += (_, e) => workspaceFailures.Add($"[{e.Diagnostic.Kind}] {e.Diagnostic.Message}");
+		workspace.RegisterWorkspaceFailedHandler(e => workspaceFailures.Add($"[{e.Diagnostic.Kind}] {e.Diagnostic.Message}"));
 
 		var solutionPath = Directory
 			.GetFiles(workspaceRootPath, "*.sln", SearchOption.TopDirectoryOnly)
@@ -2890,6 +2895,25 @@ static JsonObject CreateRange(int startLine, int startCharacter, int endLine, in
 			["character"] = endCharacter
 		}
 	};
+}
+
+/// <summary>
+/// Build a selectionRange from start + nameLength, clamped so it never exceeds
+/// the enclosing fullRange (start→end).  VS Code rejects symbols whose
+/// selectionRange is not contained in the fullRange.
+/// </summary>
+static JsonObject ClampedSelectionRange(LinePosition start, LinePosition end, int nameLength)
+{
+	int selEndLine = start.Line;
+	int selEndChar = start.Character + nameLength;
+
+	// If selectionRange end would exceed the fullRange end, clamp it.
+	if (selEndLine > end.Line || (selEndLine == end.Line && selEndChar > end.Character))
+	{
+		selEndLine = end.Line;
+		selEndChar = end.Character;
+	}
+	return CreateRange(start.Line, start.Character, selEndLine, selEndChar);
 }
 
 static IReadOnlyList<string> SplitLines(string text)
@@ -3354,7 +3378,7 @@ async Task<JsonNode> HandlePrepareCallHierarchyAsync(JsonElement requestRoot, Co
 		["kind"]           = SymbolToLspKind(symbol),
 		["uri"]            = symUri,
 		["range"]          = CreateRange(start.Line, start.Character, end.Line, end.Character),
-		["selectionRange"] = CreateRange(start.Line, start.Character, start.Line, start.Character + symbol.Name.Length),
+		["selectionRange"] = ClampedSelectionRange(start, end, symbol.Name.Length),
 		["data"]           = new JsonObject { ["uri"] = symUri, ["line"] = start.Line, ["character"] = start.Character }
 	};
 
@@ -3423,7 +3447,7 @@ async Task<JsonNode> HandleIncomingCallsAsync(JsonElement requestRoot)
 						["kind"]           = SymbolToLspKind(containerSym),
 						["uri"]            = cUri,
 						["range"]          = CreateRange(cStart.Line, cStart.Character, cEnd.Line, cEnd.Character),
-						["selectionRange"] = CreateRange(cStart.Line, cStart.Character, cStart.Line, cStart.Character + containerSym.Name.Length),
+						["selectionRange"] = ClampedSelectionRange(cStart, cEnd, containerSym.Name.Length),
 						["data"]           = new JsonObject { ["uri"] = cUri, ["line"] = cStart.Line, ["character"] = cStart.Character }
 					};
 					entry = (callerItem, new JsonArray());
@@ -3526,7 +3550,7 @@ async Task<JsonNode> HandleOutgoingCallsAsync(JsonElement requestRoot)
 					["kind"]           = SymbolToLspKind(calledSym),
 					["uri"]            = cUri,
 					["range"]          = CreateRange(cStart.Line, cStart.Character, cEnd.Line, cEnd.Character),
-					["selectionRange"] = CreateRange(cStart.Line, cStart.Character, cStart.Line, cStart.Character + calledSym.Name.Length),
+					["selectionRange"] = ClampedSelectionRange(cStart, cEnd, calledSym.Name.Length),
 					["data"]           = new JsonObject { ["uri"] = cUri, ["line"] = cStart.Line, ["character"] = cStart.Character }
 				}, new JsonArray());
 				calleeToRanges[calledSym] = entry;

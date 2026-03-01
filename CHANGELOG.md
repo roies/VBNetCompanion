@@ -8,6 +8,14 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.25] - 2026-03-01
+
+### Fixed
+
+- **Document Symbol crash ("selectionRange must be contained in fullRange")**: the `textDocument/documentSymbol` handler computed `selectionRange` from `sym.Name.Length`, which could exceed the source span (e.g. for constructors where `sym.Name` is `.ctor` but source is `New`). Now uses the syntax-node span for `range` and the identifier source span for `selectionRange`, guaranteeing containment. Same fix applied to call hierarchy handlers.
+- **MSBuild SDK resolver `MissingMethodException` with .NET 10**: the Roslyn/MSBuild packages (v4.13.0) were from the .NET 9 era and called `System.Text.Json.Utf8JsonReader` APIs that don't exist in .NET 10. Upgraded all Roslyn packages to **v5.0.0** and `Microsoft.Build.Locator` to **v1.11.2** for full .NET 10 SDK compatibility.
+- **Deprecated `Workspace.WorkspaceFailed` event**: replaced with `RegisterWorkspaceFailedHandler` (Roslyn 5.0 API).
+
 ## [0.1.24] - 2026-03-01
 
 ### Fixed
