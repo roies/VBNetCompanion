@@ -512,7 +512,7 @@ async function autoBootstrapRoslynBridge(context: vscode.ExtensionContext, outpu
 			: vscode.ConfigurationTarget.Global;
 
 		await config.update('enableLanguageClientBridge', true, target);
-		await config.update('enableBridgeForCSharp', false, target);
+		await config.update('enableBridgeForCSharp', bridgeForCSharp || !bridgeEnabled, target);
 		await config.update('enableBridgeForVisualBasic', true, target);
 		await config.update('languageClientServerCommand', companionServerLaunch.command, target);
 		await config.update('languageClientServerArgs', companionServerLaunch.args, target);
@@ -543,7 +543,7 @@ async function autoBootstrapRoslynBridge(context: vscode.ExtensionContext, outpu
 	}
 
 	await config.update('enableLanguageClientBridge', true, target);
-	await config.update('enableBridgeForCSharp', false, target);
+	await config.update('enableBridgeForCSharp', true, target);
 	await config.update('enableBridgeForVisualBasic', false, target);
 	await config.update('languageClientServerCommand', detectedServerCommand, target);
 	await config.update('languageClientServerArgs', ['--stdio'], target);

@@ -255,17 +255,25 @@ async function probeCodeActions(uri: vscode.Uri, range: vscode.Range): Promise<F
 
 async function getOrCreateProbeDocument(language: DotnetLanguage): Promise<vscode.TextDocument> {
 	// Always prefer a real workspace file over a cached synthetic document.
+	// Search for several candidates and prefer non-designer / non-generated files.
 	const glob = language === 'csharp' ? '**/*.cs' : '**/*.vb';
-	const existing = await vscode.workspace.findFiles(glob, '**/{bin,obj,node_modules,.git}/**', 1);
+	const existing = await vscode.workspace.findFiles(glob, '**/{bin,obj,node_modules,.git}/**', 20);
 	if (existing.length > 0) {
+		const isDesignerOrGenerated = (uri: { fsPath: string }) => {
+			const name = uri.fsPath.toLowerCase();
+			return name.includes('.designer.') || name.includes('.generated.') || name.endsWith('.g.cs') || name.endsWith('.g.vb');
+		};
+		const preferred = existing.filter(uri => !isDesignerOrGenerated(uri));
+		const chosen = preferred.length > 0 ? preferred[0] : existing[0];
+
 		// Invalidate synthetic cache entry now that a real file is available.
 		if (probeDocumentCache.has(language)) {
 			const cached = probeDocumentCache.get(language)!;
-			if (cached.toString() !== existing[0].toString()) {
+			if (cached.toString() !== chosen.toString()) {
 				probeDocumentCache.delete(language);
 			}
 		}
-		return vscode.workspace.openTextDocument(existing[0]);
+		return vscode.workspace.openTextDocument(chosen);
 	}
 
 	const cachedUri = probeDocumentCache.get(language);
@@ -312,6 +320,25 @@ function selectProbePosition(document: vscode.TextDocument): vscode.Position {
 		const identifierIndex = line.indexOf('localValue');
 		if (identifierIndex >= 0) {
 			return new vscode.Position(lineIndex, identifierIndex);
+		}
+	}
+
+	// For real workspace files, find a declaration keyword and position on the identifier after it.
+	const declarationPatterns = [
+		/\b(?:Sub|Function|Property|Class|Module|Structure|Enum|Interface)\s+(\w+)/i,
+		/\b(?:class|struct|interface|enum|void|int|string|bool|Task)\s+(\w+)/,
+		/\bDim\s+(\w+)/i,
+	];
+	for (let lineIndex = 0; lineIndex < document.lineCount; lineIndex++) {
+		const line = document.lineAt(lineIndex).text;
+		for (const pattern of declarationPatterns) {
+			const match = pattern.exec(line);
+			if (match && match[1]) {
+				const identStart = line.indexOf(match[1], match.index);
+				if (identStart >= 0) {
+					return new vscode.Position(lineIndex, identStart);
+				}
+			}
 		}
 	}
 

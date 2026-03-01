@@ -8,6 +8,14 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.26] - 2026-03-01
+
+### Fixed
+
+- **`enableBridgeForCSharp` always reset to `false`**: `autoBootstrapRoslynBridge()` forced `enableBridgeForCSharp = false` on every version-update re-bootstrap. Now preserves the existing value when the bridge was already configured, and defaults to `true` on first install.
+- **VB parity probe false negatives on designer/generated files**: the probe searched for a single `.vb` file and could pick auto-generated files like `*.designer.vb` where no meaningful symbols exist. Now searches up to 20 candidates and filters out designer/generated files (`*.designer.*`, `*.generated.*`, `*.g.cs`, `*.g.vb`).
+- **Parity probe position selection on real workspace files**: when the synthetic `localValue` identifier is absent, the probe now scans for VB/C# declaration keywords (`Sub`, `Function`, `Property`, `Class`, `Dim`, etc.) and positions on the identifier name, instead of falling back to the first non-whitespace character (which could be a comment or attribute).
+
 ## [0.1.25] - 2026-03-01
 
 ### Fixed
