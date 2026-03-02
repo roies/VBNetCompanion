@@ -7,7 +7,7 @@ public class GreeterService
 		return $"Hello, {name} from C#";
 	}
 
-	public int SAdd(int left, int right)
+	public int Add(int left, int right)
 	{
 		return left + right;
 	}

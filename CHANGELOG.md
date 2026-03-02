@@ -8,6 +8,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.37]
+
+- **fix:** Re-enabled CodeLens for C# files so our accurate Roslyn-based reference counts show. To avoid duplicates with C# Dev Kit, disable its CodeLens via `"dotnet.referencesCodeLens.enabled": false` and `"csharp.referencesCodeLens.enabled": false` in workspace settings.
+
 ## [0.1.36]
 
 - **fix:** Skip CodeLens for C# files again to avoid duplicate display with C# Dev Kit. VB.NET files still get our accurate Roslyn-based CodeLens.

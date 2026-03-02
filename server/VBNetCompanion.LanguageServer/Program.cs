@@ -1708,13 +1708,6 @@ async Task<JsonNode> HandleCodeLensAsync(JsonElement requestRoot, ConcurrentDict
 		return new JsonArray();
 	}
 
-	// Skip CodeLens for C# files — C# Dev Kit already provides reference counts
-	// and producing our own results in a duplicate ("0 | 1") display.
-	if (TryGetFilePathFromUri(uri, out var lensPath) && lensPath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
-	{
-		return new JsonArray();
-	}
-
 	// Try to resolve the Roslyn document for cross-project reference counting.
 	await EnsureRoslynWorkspaceLoadedAsync(forceReload: false);
 
