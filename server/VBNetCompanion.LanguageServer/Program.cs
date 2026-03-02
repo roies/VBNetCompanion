@@ -2576,8 +2576,17 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 			// The override only disables UseCurrentRuntimeIdentifier and clears
 			// RuntimeIdentifier.  We must NOT clear NETCoreSdkRuntimeIdentifier
 			// because the ProcessFrameworkReferences task requires it.
+
+			// Create a stub VSToolsPath directory so old-style web-app projects
+			// that <Import> $(VSToolsPath)\WebApplications\Microsoft.WebApplication.targets
+			// don't fail with "imported project was not found".
+			var vsToolsStubPath = Path.Combine(tempDir, $"VBNetCompanion_{pid}_vstoolspath");
+			var webAppTargetsDir = Path.Combine(vsToolsStubPath, "WebApplications");
+			Directory.CreateDirectory(webAppTargetsDir);
+			File.WriteAllText(Path.Combine(webAppTargetsDir, "Microsoft.WebApplication.targets"), "<Project />");
+
 			var overridePropsPath = Path.Combine(tempDir, $"VBNetCompanion_{pid}_rid_override.props");
-			File.WriteAllText(overridePropsPath, @"<Project>
+			File.WriteAllText(overridePropsPath, $@"<Project>
   <PropertyGroup>
     <UseCurrentRuntimeIdentifier>false</UseCurrentRuntimeIdentifier>
     <RuntimeIdentifier />
@@ -2585,20 +2594,31 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
     <EnableNETAnalyzers>false</EnableNETAnalyzers>
     <RunAnalyzersDuringBuild>false</RunAnalyzersDuringBuild>
     <RunAnalyzers>false</RunAnalyzers>
+    <!-- The SDK checks package version vs built-in analyzer version; skip it -->
+    <_SkipUpgradeNetAnalyzersNuGetWarning>true</_SkipUpgradeNetAnalyzersNuGetWarning>
     <!-- Prevent missing ruleset file errors -->
     <CodeAnalysisRuleSet />
+    <!-- Suppress NuGet audit vulnerability warnings -->
+    <NuGetAudit>false</NuGetAudit>
+    <NuGetAuditLevel>none</NuGetAuditLevel>
+    <!-- Point VSToolsPath to our stub so web-app imports succeed -->
+    <VSToolsPath>{vsToolsStubPath}</VSToolsPath>
   </PropertyGroup>
 </Project>");
 
 			var overrideTargetsPath = Path.Combine(tempDir, $"VBNetCompanion_{pid}_rid_override.targets");
-			File.WriteAllText(overrideTargetsPath, @"<Project>
+			File.WriteAllText(overrideTargetsPath, $@"<Project>
   <PropertyGroup>
     <UseCurrentRuntimeIdentifier>false</UseCurrentRuntimeIdentifier>
     <RuntimeIdentifier />
     <EnableNETAnalyzers>false</EnableNETAnalyzers>
     <RunAnalyzersDuringBuild>false</RunAnalyzersDuringBuild>
     <RunAnalyzers>false</RunAnalyzers>
+    <_SkipUpgradeNetAnalyzersNuGetWarning>true</_SkipUpgradeNetAnalyzersNuGetWarning>
     <CodeAnalysisRuleSet />
+    <NuGetAudit>false</NuGetAudit>
+    <NuGetAuditLevel>none</NuGetAuditLevel>
+    <VSToolsPath>{vsToolsStubPath}</VSToolsPath>
   </PropertyGroup>
 </Project>");
 
@@ -2614,10 +2634,13 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 			Environment.SetEnvironmentVariable("EnableNETAnalyzers", "false");
 			Environment.SetEnvironmentVariable("RunAnalyzersDuringBuild", "false");
 			Environment.SetEnvironmentVariable("RunAnalyzers", "false");
+			Environment.SetEnvironmentVariable("_SkipUpgradeNetAnalyzersNuGetWarning", "true");
 			Environment.SetEnvironmentVariable("CodeAnalysisRuleSet", "");
 			Environment.SetEnvironmentVariable("TreatWarningsAsErrors", "false");
 			Environment.SetEnvironmentVariable("MSBuildWarningsAsErrors", "");
 			Environment.SetEnvironmentVariable("NuGetAudit", "false");
+			Environment.SetEnvironmentVariable("NuGetAuditLevel", "none");
+			Environment.SetEnvironmentVariable("VSToolsPath", vsToolsStubPath);
 			Environment.SetEnvironmentVariable("DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER", "1");
 			await LogAsync($"MSBuild RID override: props={overridePropsPath}  targets={overrideTargetsPath}");
 
@@ -2661,10 +2684,12 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 			{ "EnableNETAnalyzers", "false" },
 			{ "RunAnalyzersDuringBuild", "false" },
 			{ "RunAnalyzers", "false" },
+			{ "_SkipUpgradeNetAnalyzersNuGetWarning", "true" },
 			{ "CodeAnalysisRuleSet", "" },
 			{ "TreatWarningsAsErrors", "false" },
 			{ "MSBuildWarningsAsErrors", "" },
 			{ "NuGetAudit", "false" },
+			{ "NuGetAuditLevel", "none" },
 		};
 		var workspace = MSBuildWorkspace.Create(workspaceProperties);
 		var workspaceFailures = new ConcurrentBag<string>();

@@ -8,6 +8,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.39]
+
+- **fix:** Added `_SkipUpgradeNetAnalyzersNuGetWarning=true` property (env var + override files + workspace properties) to suppress the SDK "newer analyzers version" error that `EnableNETAnalyzers=false` does not prevent. This is the actual internal property the .NET SDK checks before emitting the version conflict error.
+- **fix:** Created a stub `Microsoft.WebApplication.targets` file and set `VSToolsPath` to a temp directory containing it. Old-style web-application projects that import `$(VSToolsPath)\WebApplications\Microsoft.WebApplication.targets` no longer fail with "imported project was not found".
+- **fix:** Added `NuGetAuditLevel=none` alongside `NuGetAudit=false` to suppress NuGet vulnerability audit warnings.
+
 ## [0.1.38]
 
 - **fix:** Set all MSBuild suppression properties (`EnableNETAnalyzers`, `RunAnalyzers`, `CodeAnalysisRuleSet`, `TreatWarningsAsErrors`, `NuGetAudit`) as **direct environment variables** — not just in override files. The `CustomBeforeMicrosoftCommonProps`/`CustomAfterMicrosoftCommonTargets` override files were only imported by the in-process MSBuild, not by Roslyn's out-of-process BuildHost. Environment variables are inherited by all child processes, so the suppression now reaches BuildHost evaluations. This should eliminate the "newer analyzers" `[Failure]` diagnostics that cascade into broken project references.
