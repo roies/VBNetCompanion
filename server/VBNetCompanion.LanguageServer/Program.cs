@@ -2605,9 +2605,19 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 			Environment.SetEnvironmentVariable("CustomBeforeMicrosoftCommonProps", overridePropsPath);
 			Environment.SetEnvironmentVariable("CustomAfterMicrosoftCommonTargets", overrideTargetsPath);
 
-			// Belt-and-suspenders: also set the properties directly as env vars.
+			// Belt-and-suspenders: set ALL suppression properties directly as env vars.
+			// This is the most reliable mechanism because env vars are inherited by
+			// Roslyn's out-of-process BuildHost — the CustomBefore/After override files
+			// may not be imported by all MSBuild evaluation contexts.
 			Environment.SetEnvironmentVariable("UseCurrentRuntimeIdentifier", "false");
 			Environment.SetEnvironmentVariable("RuntimeIdentifier", "");
+			Environment.SetEnvironmentVariable("EnableNETAnalyzers", "false");
+			Environment.SetEnvironmentVariable("RunAnalyzersDuringBuild", "false");
+			Environment.SetEnvironmentVariable("RunAnalyzers", "false");
+			Environment.SetEnvironmentVariable("CodeAnalysisRuleSet", "");
+			Environment.SetEnvironmentVariable("TreatWarningsAsErrors", "false");
+			Environment.SetEnvironmentVariable("MSBuildWarningsAsErrors", "");
+			Environment.SetEnvironmentVariable("NuGetAudit", "false");
 			Environment.SetEnvironmentVariable("DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER", "1");
 			await LogAsync($"MSBuild RID override: props={overridePropsPath}  targets={overrideTargetsPath}");
 
@@ -2652,6 +2662,9 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 			{ "RunAnalyzersDuringBuild", "false" },
 			{ "RunAnalyzers", "false" },
 			{ "CodeAnalysisRuleSet", "" },
+			{ "TreatWarningsAsErrors", "false" },
+			{ "MSBuildWarningsAsErrors", "" },
+			{ "NuGetAudit", "false" },
 		};
 		var workspace = MSBuildWorkspace.Create(workspaceProperties);
 		var workspaceFailures = new ConcurrentBag<string>();

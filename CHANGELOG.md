@@ -8,6 +8,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.38]
+
+- **fix:** Set all MSBuild suppression properties (`EnableNETAnalyzers`, `RunAnalyzers`, `CodeAnalysisRuleSet`, `TreatWarningsAsErrors`, `NuGetAudit`) as **direct environment variables** — not just in override files. The `CustomBeforeMicrosoftCommonProps`/`CustomAfterMicrosoftCommonTargets` override files were only imported by the in-process MSBuild, not by Roslyn's out-of-process BuildHost. Environment variables are inherited by all child processes, so the suppression now reaches BuildHost evaluations. This should eliminate the "newer analyzers" `[Failure]` diagnostics that cascade into broken project references.
+
 ## [0.1.37]
 
 - **fix:** Re-enabled CodeLens for C# files so our accurate Roslyn-based reference counts show. To avoid duplicates with C# Dev Kit, disable its CodeLens via `"dotnet.referencesCodeLens.enabled": false` and `"csharp.referencesCodeLens.enabled": false` in workspace settings.
