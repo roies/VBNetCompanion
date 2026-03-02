@@ -8,6 +8,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.36]
+
+- **fix:** Skip CodeLens for C# files again to avoid duplicate display with C# Dev Kit. VB.NET files still get our accurate Roslyn-based CodeLens.
+- **fix:** Suppress `Microsoft.CodeAnalysis.NetAnalyzers` version-conflict errors and missing `MinimumRecommendedRules.ruleset` failures during design-time evaluation. These MSBuild `[Failure]` diagnostics were preventing projects from loading, cascading into hundreds of "project reference without matching metadata reference" warnings. Override files now set `EnableNETAnalyzers=false`, `RunAnalyzers=false`, and clear `CodeAnalysisRuleSet`.
+- **diag:** Log per-project reference graph and per-symbol FindReferencesAsync counts in CodeLens for troubleshooting.
+
 ## [0.1.35]
 
 - **fix:** Re-enabled CodeLens for C# files so our Roslyn-based reference counts appear (C# Dev Kit can be disabled separately via `dotnet.referencesCodeLens.enabled` if duplicates appear).

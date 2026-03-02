@@ -1708,6 +1708,13 @@ async Task<JsonNode> HandleCodeLensAsync(JsonElement requestRoot, ConcurrentDict
 		return new JsonArray();
 	}
 
+	// Skip CodeLens for C# files — C# Dev Kit already provides reference counts
+	// and producing our own results in a duplicate ("0 | 1") display.
+	if (TryGetFilePathFromUri(uri, out var lensPath) && lensPath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+	{
+		return new JsonArray();
+	}
+
 	// Try to resolve the Roslyn document for cross-project reference counting.
 	await EnsureRoslynWorkspaceLoadedAsync(forceReload: false);
 
@@ -2581,6 +2588,12 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
   <PropertyGroup>
     <UseCurrentRuntimeIdentifier>false</UseCurrentRuntimeIdentifier>
     <RuntimeIdentifier />
+    <!-- Suppress analyzer version conflict errors during design-time evaluation -->
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <RunAnalyzersDuringBuild>false</RunAnalyzersDuringBuild>
+    <RunAnalyzers>false</RunAnalyzers>
+    <!-- Prevent missing ruleset file errors -->
+    <CodeAnalysisRuleSet />
   </PropertyGroup>
 </Project>");
 
@@ -2589,6 +2602,10 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
   <PropertyGroup>
     <UseCurrentRuntimeIdentifier>false</UseCurrentRuntimeIdentifier>
     <RuntimeIdentifier />
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <RunAnalyzersDuringBuild>false</RunAnalyzersDuringBuild>
+    <RunAnalyzers>false</RunAnalyzers>
+    <CodeAnalysisRuleSet />
   </PropertyGroup>
 </Project>");
 
@@ -2637,6 +2654,11 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 			// the host RID (e.g. "win") into projects that were not restored with it.
 			{ "RuntimeIdentifier", "" },
 			{ "UseCurrentRuntimeIdentifier", "false" },
+			// Suppress analyzer version conflicts and ruleset file errors during design-time eval.
+			{ "EnableNETAnalyzers", "false" },
+			{ "RunAnalyzersDuringBuild", "false" },
+			{ "RunAnalyzers", "false" },
+			{ "CodeAnalysisRuleSet", "" },
 		};
 		var workspace = MSBuildWorkspace.Create(workspaceProperties);
 		var workspaceFailures = new ConcurrentBag<string>();
