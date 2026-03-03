@@ -2601,6 +2601,8 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
     <!-- Suppress NuGet audit vulnerability warnings -->
     <NuGetAudit>false</NuGetAudit>
     <NuGetAuditLevel>none</NuGetAuditLevel>
+    <!-- Suppress framework mismatch, dependency constraint, vulnerability, and circular import warnings -->
+    <NoWarn>$(NoWarn);NU1701;NU1702;NU1107;NU1901;NU1902;NU1903;NU1904;MSB4011</NoWarn>
     <!-- Point VSToolsPath to our stub so web-app imports succeed -->
     <VSToolsPath>{vsToolsStubPath}</VSToolsPath>
   </PropertyGroup>
@@ -2618,6 +2620,7 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
     <CodeAnalysisRuleSet />
     <NuGetAudit>false</NuGetAudit>
     <NuGetAuditLevel>none</NuGetAuditLevel>
+    <NoWarn>$(NoWarn);NU1701;NU1702;NU1107;NU1901;NU1902;NU1903;NU1904;MSB4011</NoWarn>
     <VSToolsPath>{vsToolsStubPath}</VSToolsPath>
   </PropertyGroup>
 </Project>");
@@ -2640,6 +2643,7 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 			Environment.SetEnvironmentVariable("MSBuildWarningsAsErrors", "");
 			Environment.SetEnvironmentVariable("NuGetAudit", "false");
 			Environment.SetEnvironmentVariable("NuGetAuditLevel", "none");
+			Environment.SetEnvironmentVariable("NoWarn", "NU1701;NU1702;NU1107;NU1901;NU1902;NU1903;NU1904;MSB4011");
 			Environment.SetEnvironmentVariable("VSToolsPath", vsToolsStubPath);
 			Environment.SetEnvironmentVariable("DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER", "1");
 			await LogAsync($"MSBuild RID override: props={overridePropsPath}  targets={overrideTargetsPath}");
@@ -2690,6 +2694,8 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 			{ "MSBuildWarningsAsErrors", "" },
 			{ "NuGetAudit", "false" },
 			{ "NuGetAuditLevel", "none" },
+			// Suppress framework mismatch, dependency constraint, vulnerability, and circular import warnings.
+			{ "NoWarn", "NU1701;NU1702;NU1107;NU1901;NU1902;NU1903;NU1904;MSB4011" },
 		};
 		var workspace = MSBuildWorkspace.Create(workspaceProperties);
 		var workspaceFailures = new ConcurrentBag<string>();

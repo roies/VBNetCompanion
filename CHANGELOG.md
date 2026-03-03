@@ -8,6 +8,15 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.40]
+
+- **fix:** Added `NoWarn=NU1701;NU1702;NU1107;NU1901;NU1902;NU1903;NU1904;MSB4011` across override files, environment variables, and workspace properties to suppress remaining MSBuild evaluation failures:
+  - **NU1702/NU1701**: Framework mismatch warnings (.NETStandard projects referencing .NETFramework projects)
+  - **NU1107**: NuGet dependency constraint violations
+  - **NU1901-NU1904**: NuGet package vulnerability audit warnings
+  - **MSB4011**: Circular import warnings ("cannot be imported again")
+- v0.1.39 already eliminated the "newer analyzers" and WebApplication.targets failures, reducing broken project refs from 235 to 117. This version targets the remaining failure types.
+
 ## [0.1.39]
 
 - **fix:** Added `_SkipUpgradeNetAnalyzersNuGetWarning=true` property (env var + override files + workspace properties) to suppress the SDK "newer analyzers version" error that `EnableNETAnalyzers=false` does not prevent. This is the actual internal property the .NET SDK checks before emitting the version conflict error.
