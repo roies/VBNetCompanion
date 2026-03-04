@@ -8,6 +8,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.41]
+
+- **fix:** Added post-load project-to-project reference repair. After `OpenSolutionAsync`, the server now walks every loaded project, reads its `<ProjectReference>` elements from the MSBuild file, and adds missing Roslyn-level `ProjectReference` links for projects that are in the solution but weren't wired up by MSBuildWorkspace. This should dramatically reduce the "project reference without a matching metadata reference" warnings and improve cross-project F12 navigation and IntelliSense in large solutions with old-style .NET Framework projects.
+
 ## [0.1.40]
 
 - **fix:** Added `NoWarn=NU1701;NU1702;NU1107;NU1901;NU1902;NU1903;NU1904;MSB4011` across override files, environment variables, and workspace properties to suppress remaining MSBuild evaluation failures:

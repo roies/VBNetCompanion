@@ -2713,6 +2713,20 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 				roslynWorkspace = workspace;
 				foreach (var f in workspaceFailures) await LogAsync($"WorkspaceDiag: {f}", 2);
 
+				// ── Post-load: repair broken project-to-project references ──
+				// MSBuildWorkspace sometimes fails to wire up ProjectReferences
+				// (the "project reference without a matching metadata reference"
+				// warning).  Walk every project, find references whose target
+				// project is already in the solution but isn't linked via Roslyn
+				// ProjectReference, and add them.  This lets Roslyn resolve
+				// cross-project symbols even when MSBuild evaluation was imperfect.
+				roslynSolution = RepairProjectReferences(roslynSolution);
+				if (!workspace.TryApplyChanges(roslynSolution))
+				{
+					await LogAsync("Warning: TryApplyChanges failed after P2P reference repair — using workspace.CurrentSolution", 2);
+				}
+				roslynSolution = workspace.CurrentSolution;
+
 				// Log document counts per project to diagnose whether source files were loaded.
 				var totalDocs = 0;
 				var emptyProjects = 0;
@@ -2821,6 +2835,71 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 	{
 		workspaceLoadGate.Release();
 	}
+}
+
+/// <summary>
+/// Walk every project in the solution and ensure that each ProjectReference
+/// declared in the MSBuild project file is also present as a Roslyn-level
+/// ProjectReference.  MSBuildWorkspace often fails to wire these up for
+/// old-style .NET Framework projects, resulting in "project reference
+/// without a matching metadata reference" warnings and broken cross-project
+/// navigation.
+/// </summary>
+Solution RepairProjectReferences(Solution solution)
+{
+	// Build a lookup from absolute project file path → ProjectId.
+	var pathToId = new Dictionary<string, ProjectId>(StringComparer.OrdinalIgnoreCase);
+	foreach (var proj in solution.Projects)
+	{
+		if (!string.IsNullOrEmpty(proj.FilePath))
+			pathToId[Path.GetFullPath(proj.FilePath)] = proj.Id;
+	}
+
+	var totalAdded = 0;
+
+	foreach (var proj in solution.Projects)
+	{
+		if (string.IsNullOrEmpty(proj.FilePath)) continue;
+
+		// Collect existing Roslyn P2P refs for this project.
+		var existingRefIds = new HashSet<ProjectId>(proj.ProjectReferences.Select(r => r.ProjectId));
+
+		// Read the MSBuild project file to discover declared ProjectReferences.
+		try
+		{
+			var projDir = Path.GetDirectoryName(proj.FilePath)!;
+			var xdoc = System.Xml.Linq.XDocument.Load(proj.FilePath);
+			// Handle default namespace (SDK-style projects have no namespace,
+			// old-style projects use the msbuild namespace).
+			var ns = xdoc.Root?.Name.Namespace ?? System.Xml.Linq.XNamespace.None;
+
+			foreach (var prElem in xdoc.Descendants(ns + "ProjectReference"))
+			{
+				var include = prElem.Attribute("Include")?.Value;
+				if (string.IsNullOrWhiteSpace(include)) continue;
+
+				string refAbsPath;
+				try { refAbsPath = Path.GetFullPath(Path.Combine(projDir, include)); }
+				catch { continue; }
+
+				if (pathToId.TryGetValue(refAbsPath, out var refId) && !existingRefIds.Contains(refId) && refId != proj.Id)
+				{
+					solution = solution.AddProjectReference(proj.Id, new ProjectReference(refId));
+					existingRefIds.Add(refId);
+					totalAdded++;
+				}
+			}
+		}
+		catch
+		{
+			// If we can't parse the project file, skip silently.
+		}
+	}
+
+	if (totalAdded > 0)
+		_ = LogAsync($"P2P reference repair: added {totalAdded} missing project reference(s)");
+
+	return solution;
 }
 
 async Task SummarizeWorkspaceLoadIssuesAsync(ConcurrentBag<string> failures)
