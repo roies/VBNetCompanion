@@ -8,6 +8,17 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.42]
+
+- **fix:** Removed `RuntimeIdentifier=""` override that was causing "doesn't list 'win' as a RuntimeIdentifier" errors for SDK-style projects (NGEvents.Contracts.csproj, BSO.csproj). Now only sets `UseCurrentRuntimeIdentifier=false`.
+- **fix:** Added critical OmniSharp-compatible design-time build properties:
+  - `BuildProjectReferences=false` — prevents cascading build failures during MSBuild evaluation. Instead of trying to build referenced projects (which often fails for old-style .NET Framework projects), MSBuild now resolves to pre-built output DLLs on disk.
+  - `_ResolveReferenceDependencies=true` — ensures transitive reference dependencies are fully resolved during design-time evaluation.
+  - `SolutionDir`, `SolutionPath`, `SolutionName`, `SolutionFileName` — set from the discovered .sln file so MSBuild project files that use `$(SolutionDir)` can resolve paths correctly.
+- **fix:** Added MetadataReference fallback from pre-built output DLLs. After solution load, projects with very few MetadataReferences (indicating broken design-time evaluation) are scanned for output DLLs in their `bin/` directories. Found DLLs are added as MetadataReferences to all dependent projects, enabling cross-project type resolution even when Roslyn's in-memory compilation is incomplete.
+- **diag:** Added per-project MetadataReference count logging — projects with <3 MetadataReferences are logged to help diagnose reference resolution issues.
+- **diag:** P2P reference repair now always logs its result count (including when 0 references were added).
+
 ## [0.1.41]
 
 - **fix:** Added post-load project-to-project reference repair. After `OpenSolutionAsync`, the server now walks every loaded project, reads its `<ProjectReference>` elements from the MSBuild file, and adds missing Roslyn-level `ProjectReference` links for projects that are in the solution but weren't wired up by MSBuildWorkspace. This should dramatically reduce the "project reference without a matching metadata reference" warnings and improve cross-project F12 navigation and IntelliSense in large solutions with old-style .NET Framework projects.
