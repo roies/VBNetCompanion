@@ -2589,6 +2589,7 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 			File.WriteAllText(overridePropsPath, $@"<Project>
   <PropertyGroup>
     <UseCurrentRuntimeIdentifier>false</UseCurrentRuntimeIdentifier>
+    <RuntimeIdentifier />
     <!-- Suppress analyzer version conflict errors during design-time evaluation -->
     <EnableNETAnalyzers>false</EnableNETAnalyzers>
     <RunAnalyzersDuringBuild>false</RunAnalyzersDuringBuild>
@@ -2611,6 +2612,7 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 			File.WriteAllText(overrideTargetsPath, $@"<Project>
   <PropertyGroup>
     <UseCurrentRuntimeIdentifier>false</UseCurrentRuntimeIdentifier>
+    <RuntimeIdentifier />
     <EnableNETAnalyzers>false</EnableNETAnalyzers>
     <RunAnalyzersDuringBuild>false</RunAnalyzersDuringBuild>
     <RunAnalyzers>false</RunAnalyzers>
@@ -2631,6 +2633,7 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 			// Roslyn's out-of-process BuildHost — the CustomBefore/After override files
 			// may not be imported by all MSBuild evaluation contexts.
 			Environment.SetEnvironmentVariable("UseCurrentRuntimeIdentifier", "false");
+			Environment.SetEnvironmentVariable("RuntimeIdentifier", "");
 			Environment.SetEnvironmentVariable("BuildProjectReferences", "false");
 			Environment.SetEnvironmentVariable("_ResolveReferenceDependencies", "true");
 			Environment.SetEnvironmentVariable("EnableNETAnalyzers", "false");
@@ -2679,6 +2682,9 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 			{ "SkipCompilerExecution", "true" },
 			{ "ProvideCommandLineArgs", "true" },
 			{ "ShouldUnsetParentConfigurationAndPlatform", "false" },
+			// Prevent .NET 10+ SDK from inferring the host platform RID,
+			// which causes "doesn't list 'win' as RuntimeIdentifier" errors.
+			{ "RuntimeIdentifier", "" },
 			{ "UseCurrentRuntimeIdentifier", "false" },
 			// Prevent cascading build failures: don't try to build referenced projects
 			// during design-time evaluation — rely on pre-built output DLLs instead.
@@ -2741,30 +2747,47 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 				}
 				roslynSolution = workspace.CurrentSolution;
 
-				// ── Diagnostic: log projects with very few MetadataReferences ──
-				var lowMetaRefProjects = new List<string>();
-				foreach (var proj in roslynSolution.Projects)
-				{
-					var metaCount = proj.MetadataReferences.Count;
-					if (metaCount < 3)
-						lowMetaRefProjects.Add($"{Path.GetFileName(proj.FilePath)}({metaCount})");
-				}
-				if (lowMetaRefProjects.Count > 0)
-				{
-					await LogAsync($"Projects with <3 MetadataReferences ({lowMetaRefProjects.Count}): " +
-						string.Join(", ", lowMetaRefProjects.Take(30)) +
-						(lowMetaRefProjects.Count > 30 ? $" ... and {lowMetaRefProjects.Count - 30} more" : ""));
+				// ── Fallback: add pre-built output DLLs as MetadataReferences ──
+				// For every project reference edge A→B, if B's output DLL is not
+				// in A's MetadataReferences, find B's DLL on disk (from a previous
+				// VS build) and add it.  This is the same thing MSBuild WOULD do
+				// during a successful design-time build but failed to do.
+				roslynSolution = AddOutputDllFallbacks(roslynSolution);
+				if (!workspace.TryApplyChanges(roslynSolution))
+					await LogAsync("Warning: TryApplyChanges failed after DLL fallback — using workspace.CurrentSolution", 2);
+				roslynSolution = workspace.CurrentSolution;
 
-					// ── Fallback: add pre-built output DLLs as MetadataReferences ──
-					// For projects whose design-time build failed to resolve references,
-					// find their output DLL on disk (from a previous VS build) and add
-					// it as a MetadataReference to all projects that depend on them.
-					// This provides type info even when Roslyn's in-memory compilation
-					// of the referenced project is incomplete.
-					roslynSolution = AddOutputDllFallbacks(roslynSolution);
-					if (!workspace.TryApplyChanges(roslynSolution))
-						await LogAsync("Warning: TryApplyChanges failed after DLL fallback — using workspace.CurrentSolution", 2);
-					roslynSolution = workspace.CurrentSolution;
+				// ── Compilation diagnostics: sample a few projects to verify Roslyn can compile them ──
+				try
+				{
+					var sampleProjects = roslynSolution.Projects
+						.Where(p => p.Documents.Any())
+						.Take(5)
+						.ToList();
+					foreach (var sp in sampleProjects)
+					{
+						var comp = await sp.GetCompilationAsync();
+						if (comp != null)
+						{
+							var errors = comp.GetDiagnostics()
+								.Where(d => d.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error)
+								.ToList();
+							await LogAsync($"Compilation check: {Path.GetFileName(sp.FilePath)} — " +
+								$"{sp.MetadataReferences.Count} MetadataRef(s), " +
+								$"{sp.ProjectReferences.Count()} ProjectRef(s), " +
+								$"{sp.Documents.Count()} doc(s), " +
+								$"{errors.Count} error(s)" +
+								(errors.Count > 0 ? $" [first: {errors[0].Id} {errors[0].GetMessage().Substring(0, Math.Min(100, errors[0].GetMessage().Length))}]" : ""));
+						}
+						else
+						{
+							await LogAsync($"Compilation check: {Path.GetFileName(sp.FilePath)} — GetCompilationAsync returned null");
+						}
+					}
+				}
+				catch (Exception cex)
+				{
+					await LogAsync($"Compilation check failed: {cex.Message}");
 				}
 
 				// Log document counts per project to diagnose whether source files were loaded.
@@ -2945,69 +2968,81 @@ Solution RepairProjectReferences(Solution solution)
 }
 
 /// <summary>
-/// For projects whose MSBuild design-time build failed to resolve references
-/// (MetadataReferences count is very low), find their pre-built output DLL on disk
-/// and add it as a MetadataReference to all projects that depend on them.
-/// This provides type info for cross-project navigation even when a referenced
-/// project's in-memory Roslyn compilation is incomplete.
+/// For every project reference edge A→B, check whether B's output DLL is
+/// present in A's MetadataReferences.  If not, search for B's DLL on disk
+/// (from a previous Visual Studio build) and add it.  This is exactly what
+/// MSBuild would do in a successful design-time build but failed to do for
+/// these "project reference without a matching metadata reference" cases.
 /// </summary>
 Solution AddOutputDllFallbacks(Solution solution)
 {
-	// Identify projects with broken reference resolution.
-	var brokenProjects = new HashSet<ProjectId>();
+	// Cache: ProjectId → output DLL path on disk (null if not found).
+	var outputDllCache = new Dictionary<ProjectId, string?>();
 	foreach (var proj in solution.Projects)
-	{
-		if (proj.MetadataReferences.Count < 3)
-			brokenProjects.Add(proj.Id);
-	}
-
-	if (brokenProjects.Count == 0) return solution;
+		outputDllCache[proj.Id] = FindProjectOutputDll(proj);
 
 	var totalAdded = 0;
-	var dllsUsed = new List<string>();
+	var dllsFound = 0;
+	var dllsNotFound = new List<string>();
 
 	foreach (var proj in solution.Projects)
 	{
-		if (string.IsNullOrEmpty(proj.FilePath)) continue;
-		if (!brokenProjects.Contains(proj.Id)) continue;
+		// For each project reference from this project, check if the
+		// referenced project's output DLL is already in MetadataReferences.
+		var existingDllPaths = new HashSet<string>(
+			proj.MetadataReferences
+				.OfType<PortableExecutableReference>()
+				.Where(r => r.FilePath != null)
+				.Select(r => r.FilePath!),
+			StringComparer.OrdinalIgnoreCase);
 
-		// Find this project's output DLL on disk.
-		var outputDll = FindProjectOutputDll(proj);
-		if (outputDll == null) continue;
-
-		try
+		foreach (var projRef in proj.ProjectReferences)
 		{
-			var metaRef = MetadataReference.CreateFromFile(outputDll);
+			var refProj = solution.GetProject(projRef.ProjectId);
+			if (refProj == null) continue;
 
-			// Add to every project that references this broken project.
-			foreach (var dependent in solution.Projects)
+			// Check if any existing MetadataReference already matches this
+			// referenced project's assembly name (by DLL filename).
+			var refAssemblyName = !string.IsNullOrEmpty(refProj.AssemblyName)
+				? refProj.AssemblyName
+				: Path.GetFileNameWithoutExtension(refProj.FilePath);
+			var expectedDllName = refAssemblyName + ".dll";
+
+			bool alreadyHas = existingDllPaths
+				.Any(p => Path.GetFileName(p)
+					.Equals(expectedDllName, StringComparison.OrdinalIgnoreCase));
+			if (alreadyHas) continue;
+
+			// This project reference has no matching MetadataReference.
+			// Try to find the referenced project's output DLL on disk.
+			if (!outputDllCache.TryGetValue(projRef.ProjectId, out var refDll) || refDll == null)
 			{
-				if (dependent.ProjectReferences.Any(r => r.ProjectId == proj.Id))
-				{
-					// Check it's not already referenced by DLL path.
-					bool alreadyHas = dependent.MetadataReferences
-						.OfType<PortableExecutableReference>()
-						.Any(r => string.Equals(r.FilePath, outputDll, StringComparison.OrdinalIgnoreCase));
-					if (!alreadyHas)
-					{
-						solution = solution.AddMetadataReference(dependent.Id, metaRef);
-						totalAdded++;
-					}
-				}
+				if (dllsNotFound.Count < 30)
+					dllsNotFound.Add(refAssemblyName ?? "?");
+				continue;
 			}
-			dllsUsed.Add(Path.GetFileName(outputDll));
-		}
-		catch
-		{
-			// DLL might be locked or corrupt — skip.
+
+			try
+			{
+				var metaRef = MetadataReference.CreateFromFile(refDll);
+				solution = solution.AddMetadataReference(proj.Id, metaRef);
+				existingDllPaths.Add(refDll);
+				totalAdded++;
+				if (totalAdded == 1) dllsFound = 0; // reset for first
+				dllsFound++;
+			}
+			catch
+			{
+				// DLL might be locked or corrupt — skip.
+			}
 		}
 	}
 
-	if (totalAdded > 0)
-		_ = LogAsync($"DLL fallback: added {totalAdded} MetadataReference(s) from {dllsUsed.Count} output DLL(s): {string.Join(", ", dllsUsed.Take(20))}" +
-			(dllsUsed.Count > 20 ? $" ... and {dllsUsed.Count - 20} more" : ""));
-	else
-		_ = LogAsync("DLL fallback: no pre-built output DLLs found for broken projects");
+	_ = LogAsync($"DLL fallback: added {totalAdded} MetadataReference(s) for missing project output DLLs");
+	if (dllsNotFound.Count > 0)
+		_ = LogAsync($"DLL fallback: {dllsNotFound.Count} referenced project DLLs not found on disk: " +
+			string.Join(", ", dllsNotFound.Take(30)) +
+			(dllsNotFound.Count > 30 ? " ..." : ""));
 
 	return solution;
 }

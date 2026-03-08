@@ -8,6 +8,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.43]
+
+- **fix:** Completely rewrote the DLL fallback mechanism. Instead of only checking projects with very few MetadataReferences (which missed the actual problem), the server now scans EVERY project reference edge: if project A references project B and B's output DLL is not in A's MetadataReferences, it searches B's `bin/` directory for a pre-built DLL and adds it. This directly addresses the 117 "project reference without a matching metadata reference" warnings by providing the output DLLs that MSBuild's design-time evaluation failed to resolve.
+- **fix:** Re-added `RuntimeIdentifier=""` to environment variables, workspace properties, and override files. Removing it in v0.1.42 did not help — the "doesn't list 'win' as a RuntimeIdentifier" errors persisted — and the empty override is needed to prevent the .NET 10 SDK from auto-injecting the host RID into .NET Framework projects.
+- **diag:** Added compilation diagnostics: after solution load, the server samples 5 projects, calls `GetCompilationAsync()`, and logs per-project MetadataReference count, ProjectReference count, document count, and compilation error count with first error details. This reveals whether Roslyn can actually compile the projects (the real test of cross-project navigation).
+
 ## [0.1.42]
 
 - **fix:** Removed `RuntimeIdentifier=""` override that was causing "doesn't list 'win' as a RuntimeIdentifier" errors for SDK-style projects (NGEvents.Contracts.csproj, BSO.csproj). Now only sets `UseCurrentRuntimeIdentifier=false`.
