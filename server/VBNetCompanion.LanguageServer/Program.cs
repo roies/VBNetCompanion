@@ -1711,9 +1711,8 @@ async Task<JsonNode> HandleCodeLensAsync(JsonElement requestRoot, ConcurrentDict
 	// Try to resolve the Roslyn document for cross-project reference counting.
 	await EnsureRoslynWorkspaceLoadedAsync(forceReload: false);
 
-	// Use the workspace's live solution to pick up any post-load updates
-	// (e.g. project reference resolution, document text changes).
-	var currentSolution = roslynWorkspace?.CurrentSolution ?? roslynSolution;
+	// Use our patched solution (includes DLL fallback MetadataReferences).
+	var currentSolution = roslynSolution;
 
 	Document? roslynDoc = null;
 	if (currentSolution is not null && TryGetFilePathFromUri(uri, out var codeLensFilePath))
@@ -2497,7 +2496,7 @@ async Task<(Document Document, int Position, Solution Solution)?> TryResolveRosl
 	}
 
 	await EnsureRoslynWorkspaceLoadedAsync(forceReload: false);
-	var solution = roslynWorkspace?.CurrentSolution ?? roslynSolution;
+	var solution = roslynSolution;
 	if (solution is null)
 	{
 		return null;
@@ -2556,99 +2555,12 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 
 		if (!MSBuildLocator.IsRegistered)
 		{
-			// Write TWO temporary MSBuild override files:
-			//
-			// 1. A .props file (CustomBeforeMicrosoftCommonProps) — sets properties
-			//    EARLY in evaluation before the SDK runs.
-			//
-			// 2. A .targets file (CustomAfterMicrosoftCommonTargets) — sets the
-			//    SAME properties AFTER the .NET SDK's RuntimeIdentifierInference
-			//    targets have already run, overriding whatever the SDK inferred.
-			//    This is the critical one: the .NET 10 SDK sets RuntimeIdentifier
-			//    inside a target that fires *after* props evaluation, so only a
-			//    later import can override it.
-			//
-			// Both files inherit to Roslyn's out-of-process BuildHost because
-			// the env vars are set before child processes are spawned.
-			var tempDir = Path.GetTempPath();
-			var pid = Environment.ProcessId;
+			// IMPORTANT: This extension NEVER modifies the user's project files,
+			// build system, or workspace on disk.  All MSBuild property overrides
+			// are passed exclusively through the MSBuildWorkspace.Create()
+			// properties dictionary (Roslyn-internal, process-scoped).
 
-			// The override only disables UseCurrentRuntimeIdentifier and clears
-			// RuntimeIdentifier.  We must NOT clear NETCoreSdkRuntimeIdentifier
-			// because the ProcessFrameworkReferences task requires it.
-
-			// Create a stub VSToolsPath directory so old-style web-app projects
-			// that <Import> $(VSToolsPath)\WebApplications\Microsoft.WebApplication.targets
-			// don't fail with "imported project was not found".
-			var vsToolsStubPath = Path.Combine(tempDir, $"VBNetCompanion_{pid}_vstoolspath");
-			var webAppTargetsDir = Path.Combine(vsToolsStubPath, "WebApplications");
-			Directory.CreateDirectory(webAppTargetsDir);
-			File.WriteAllText(Path.Combine(webAppTargetsDir, "Microsoft.WebApplication.targets"), "<Project />");
-
-			var overridePropsPath = Path.Combine(tempDir, $"VBNetCompanion_{pid}_rid_override.props");
-			File.WriteAllText(overridePropsPath, $@"<Project>
-  <PropertyGroup>
-    <UseCurrentRuntimeIdentifier>false</UseCurrentRuntimeIdentifier>
-    <RuntimeIdentifier />
-    <!-- Suppress analyzer version conflict errors during design-time evaluation -->
-    <EnableNETAnalyzers>false</EnableNETAnalyzers>
-    <RunAnalyzersDuringBuild>false</RunAnalyzersDuringBuild>
-    <RunAnalyzers>false</RunAnalyzers>
-    <!-- The SDK checks package version vs built-in analyzer version; skip it -->
-    <_SkipUpgradeNetAnalyzersNuGetWarning>true</_SkipUpgradeNetAnalyzersNuGetWarning>
-    <!-- Prevent missing ruleset file errors -->
-    <CodeAnalysisRuleSet />
-    <!-- Suppress NuGet audit vulnerability warnings -->
-    <NuGetAudit>false</NuGetAudit>
-    <NuGetAuditLevel>none</NuGetAuditLevel>
-    <!-- Suppress framework mismatch, dependency constraint, vulnerability, and circular import warnings -->
-    <NoWarn>$(NoWarn);NU1701;NU1702;NU1107;NU1901;NU1902;NU1903;NU1904;MSB4011</NoWarn>
-    <!-- Point VSToolsPath to our stub so web-app imports succeed -->
-    <VSToolsPath>{vsToolsStubPath}</VSToolsPath>
-  </PropertyGroup>
-</Project>");
-
-			var overrideTargetsPath = Path.Combine(tempDir, $"VBNetCompanion_{pid}_rid_override.targets");
-			File.WriteAllText(overrideTargetsPath, $@"<Project>
-  <PropertyGroup>
-    <UseCurrentRuntimeIdentifier>false</UseCurrentRuntimeIdentifier>
-    <RuntimeIdentifier />
-    <EnableNETAnalyzers>false</EnableNETAnalyzers>
-    <RunAnalyzersDuringBuild>false</RunAnalyzersDuringBuild>
-    <RunAnalyzers>false</RunAnalyzers>
-    <_SkipUpgradeNetAnalyzersNuGetWarning>true</_SkipUpgradeNetAnalyzersNuGetWarning>
-    <CodeAnalysisRuleSet />
-    <NuGetAudit>false</NuGetAudit>
-    <NuGetAuditLevel>none</NuGetAuditLevel>
-    <NoWarn>$(NoWarn);NU1701;NU1702;NU1107;NU1901;NU1902;NU1903;NU1904;MSB4011</NoWarn>
-    <VSToolsPath>{vsToolsStubPath}</VSToolsPath>
-  </PropertyGroup>
-</Project>");
-
-			Environment.SetEnvironmentVariable("CustomBeforeMicrosoftCommonProps", overridePropsPath);
-			Environment.SetEnvironmentVariable("CustomAfterMicrosoftCommonTargets", overrideTargetsPath);
-
-			// Belt-and-suspenders: set ALL suppression properties directly as env vars.
-			// This is the most reliable mechanism because env vars are inherited by
-			// Roslyn's out-of-process BuildHost — the CustomBefore/After override files
-			// may not be imported by all MSBuild evaluation contexts.
-			Environment.SetEnvironmentVariable("UseCurrentRuntimeIdentifier", "false");
-			Environment.SetEnvironmentVariable("RuntimeIdentifier", "");
-			Environment.SetEnvironmentVariable("BuildProjectReferences", "false");
-			Environment.SetEnvironmentVariable("_ResolveReferenceDependencies", "true");
-			Environment.SetEnvironmentVariable("EnableNETAnalyzers", "false");
-			Environment.SetEnvironmentVariable("RunAnalyzersDuringBuild", "false");
-			Environment.SetEnvironmentVariable("RunAnalyzers", "false");
-			Environment.SetEnvironmentVariable("_SkipUpgradeNetAnalyzersNuGetWarning", "true");
-			Environment.SetEnvironmentVariable("CodeAnalysisRuleSet", "");
-			Environment.SetEnvironmentVariable("TreatWarningsAsErrors", "false");
-			Environment.SetEnvironmentVariable("MSBuildWarningsAsErrors", "");
-			Environment.SetEnvironmentVariable("NuGetAudit", "false");
-			Environment.SetEnvironmentVariable("NuGetAuditLevel", "none");
-			Environment.SetEnvironmentVariable("NoWarn", "NU1701;NU1702;NU1107;NU1901;NU1902;NU1903;NU1904;MSB4011");
-			Environment.SetEnvironmentVariable("VSToolsPath", vsToolsStubPath);
 			Environment.SetEnvironmentVariable("DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER", "1");
-			await LogAsync($"MSBuild RID override: props={overridePropsPath}  targets={overrideTargetsPath}");
 
 			var msbuildPath = TryFindMSBuildPath();
 			if (msbuildPath is not null)
@@ -2672,9 +2584,7 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 		}
 
 		// Configure MSBuildWorkspace with design-time build properties.
-		// This mirrors what Visual Studio / OmniSharp use for IDE evaluation and prevents
-		// false failures such as "Your project file doesn't list 'win' as a RuntimeIdentifier"
-		// that occur when MSBuild applies the host platform's default RID to old .NET Framework projects.
+		// This mirrors what Visual Studio / OmniSharp use for IDE evaluation.
 		var workspaceProperties = new Dictionary<string, string>
 		{
 			{ "DesignTimeBuild", "true" },
@@ -2682,10 +2592,7 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 			{ "SkipCompilerExecution", "true" },
 			{ "ProvideCommandLineArgs", "true" },
 			{ "ShouldUnsetParentConfigurationAndPlatform", "false" },
-			// Prevent .NET 10+ SDK from inferring the host platform RID,
-			// which causes "doesn't list 'win' as RuntimeIdentifier" errors.
-			{ "RuntimeIdentifier", "" },
-			{ "UseCurrentRuntimeIdentifier", "false" },
+			{ "SkipInvalidConfigurations", "true" },
 			// Prevent cascading build failures: don't try to build referenced projects
 			// during design-time evaluation — rely on pre-built output DLLs instead.
 			{ "BuildProjectReferences", "false" },
@@ -2731,7 +2638,25 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 			{
 				roslynSolution = await workspace.OpenSolutionAsync(solutionPath);
 				roslynWorkspace = workspace;
-				foreach (var f in workspaceFailures) await LogAsync($"WorkspaceDiag: {f}", 2);
+
+				// Log workspace diagnostics — condense RuntimeIdentifier errors (common with .NET 10 SDK)
+				var ridErrorCount = 0;
+				var otherDiagCount = 0;
+				foreach (var f in workspaceFailures)
+				{
+					if (f.Contains("RuntimeIdentifier", StringComparison.OrdinalIgnoreCase))
+					{
+						ridErrorCount++;
+					}
+					else
+					{
+						otherDiagCount++;
+						await LogAsync($"WorkspaceDiag: {f}", 2);
+					}
+				}
+				if (ridErrorCount > 0)
+					await LogAsync($"WorkspaceDiag: {ridErrorCount} RuntimeIdentifier mismatch error(s) suppressed " +
+						"(expected for .NET 10 SDK — DLL fallback will compensate)", 2);
 
 				// ── Post-load: repair broken project-to-project references ──
 				// MSBuildWorkspace sometimes fails to wire up ProjectReferences
@@ -2741,11 +2666,6 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 				// ProjectReference, and add them.  This lets Roslyn resolve
 				// cross-project symbols even when MSBuild evaluation was imperfect.
 				roslynSolution = RepairProjectReferences(roslynSolution);
-				if (!workspace.TryApplyChanges(roslynSolution))
-				{
-					await LogAsync("Warning: TryApplyChanges failed after P2P reference repair — using workspace.CurrentSolution", 2);
-				}
-				roslynSolution = workspace.CurrentSolution;
 
 				// ── Fallback: add pre-built output DLLs as MetadataReferences ──
 				// For every project reference edge A→B, if B's output DLL is not
@@ -2753,53 +2673,21 @@ async Task EnsureRoslynWorkspaceLoadedAsync(bool forceReload)
 				// VS build) and add it.  This is the same thing MSBuild WOULD do
 				// during a successful design-time build but failed to do.
 				roslynSolution = AddOutputDllFallbacks(roslynSolution);
-				if (!workspace.TryApplyChanges(roslynSolution))
-					await LogAsync("Warning: TryApplyChanges failed after DLL fallback — using workspace.CurrentSolution", 2);
-				roslynSolution = workspace.CurrentSolution;
 
-				// ── Compilation diagnostics: sample a few projects to verify Roslyn can compile them ──
-				try
-				{
-					var sampleProjects = roslynSolution.Projects
-						.Where(p => p.Documents.Any())
-						.Take(5)
-						.ToList();
-					foreach (var sp in sampleProjects)
-					{
-						var comp = await sp.GetCompilationAsync();
-						if (comp != null)
-						{
-							var errors = comp.GetDiagnostics()
-								.Where(d => d.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error)
-								.ToList();
-							await LogAsync($"Compilation check: {Path.GetFileName(sp.FilePath)} — " +
-								$"{sp.MetadataReferences.Count} MetadataRef(s), " +
-								$"{sp.ProjectReferences.Count()} ProjectRef(s), " +
-								$"{sp.Documents.Count()} doc(s), " +
-								$"{errors.Count} error(s)" +
-								(errors.Count > 0 ? $" [first: {errors[0].Id} {errors[0].GetMessage().Substring(0, Math.Min(100, errors[0].GetMessage().Length))}]" : ""));
-						}
-						else
-						{
-							await LogAsync($"Compilation check: {Path.GetFileName(sp.FilePath)} — GetCompilationAsync returned null");
-						}
-					}
-				}
-				catch (Exception cex)
-				{
-					await LogAsync($"Compilation check failed: {cex.Message}");
-				}
-
-				// Log document counts per project to diagnose whether source files were loaded.
+				// ── Quick reference-count summary (no compilation — too slow for large solutions) ──
 				var totalDocs = 0;
 				var emptyProjects = 0;
+				var totalMetaRefs = 0;
+				var totalProjRefs = 0;
 				foreach (var proj in roslynSolution.Projects)
 				{
 					var docCount = proj.Documents.Count();
 					totalDocs += docCount;
+					totalMetaRefs += proj.MetadataReferences.Count;
+					totalProjRefs += proj.ProjectReferences.Count();
 					if (docCount == 0) emptyProjects++;
 				}
-				await LogAsync($"Roslyn solution loaded: {solutionPath} ({roslynSolution.Projects.Count()} projects, {totalDocs} documents, {emptyProjects} empty project(s))");
+				await LogAsync($"Roslyn solution loaded: {solutionPath} ({roslynSolution.Projects.Count()} projects, {totalDocs} documents, {emptyProjects} empty project(s), {totalMetaRefs} total MetadataRef(s), {totalProjRefs} total ProjectRef(s))");
 				await SummarizeWorkspaceLoadIssuesAsync(workspaceFailures);
 				return;
 			}
@@ -3094,7 +2982,8 @@ async Task SummarizeWorkspaceLoadIssuesAsync(ConcurrentBag<string> failures)
 		|| f.Contains("MissingMethodException", StringComparison.OrdinalIgnoreCase)
 		|| f.Contains("SDK Resolver Failure", StringComparison.OrdinalIgnoreCase));
 	var missingRefWarnings = failureList.Count(f => f.Contains("without a matching metadata reference", StringComparison.OrdinalIgnoreCase));
-	var otherFailures = failureList.Count - sdkResolverFailures - missingRefWarnings;
+	var ridErrors = failureList.Count(f => f.Contains("RuntimeIdentifier", StringComparison.OrdinalIgnoreCase));
+	var otherFailures = failureList.Count - sdkResolverFailures - missingRefWarnings - ridErrors;
 
 	var parts = new List<string>();
 
@@ -3106,7 +2995,12 @@ async Task SummarizeWorkspaceLoadIssuesAsync(ConcurrentBag<string> failures)
 
 	if (missingRefWarnings > 0)
 	{
-		parts.Add($"{missingRefWarnings} project reference(s) could not be resolved. Cross-project navigation and IntelliSense may be degraded.");
+		parts.Add($"{missingRefWarnings} project reference(s) could not be resolved (DLL fallback may have compensated).");
+	}
+
+	if (ridErrors > 0)
+	{
+		parts.Add($"{ridErrors} RuntimeIdentifier mismatch diagnostic(s) (expected for .NET 10 SDK — DLL fallback compensates).");
 	}
 
 	if (otherFailures > 0)

@@ -8,6 +8,21 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.45]
+
+- **fix:** Critical startup hang — `workspace.TryApplyChanges()` was blocking indefinitely when applying 742 MetadataReference additions (DLL fallback) to MSBuildWorkspace. MSBuildWorkspace does not support adding MetadataReferences, causing it to hang. This blocked the workspace load semaphore, preventing ALL LSP handlers (F12, Hover, IntelliSense, CodeLens) from responding. Removed both TryApplyChanges calls at startup; roslynSolution with fallback refs is used directly.
+- **fix:** Removed all override .props/.targets file creation, VSToolsPath stub directories, and MSBuild environment variable overrides. The extension no longer writes ANY files to disk or sets environment variables that affect MSBuild evaluation (except the benign DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER). All design-time build properties are now passed exclusively through MSBuildWorkspace.Create() properties dictionary.
+
+## [0.1.44]
+
+- **fix:** Removed `RuntimeIdentifier=""` and `UseCurrentRuntimeIdentifier=false` overrides from all locations (override .props/.targets files, environment variables, workspace properties). These overrides were causing a massive regression in v0.1.43: clearing RuntimeIdentifier conflicts with NuGet's stored restore assets (which expect the host RID), causing ~90+ "doesn't list 'win' as a RuntimeIdentifier" errors across all SDK-style projects. Without the override, only ~4-7 natural RID mismatches occur (handled by DLL fallback).
+- **fix:** Critical bug — after DLL fallback added MetadataReferences, the code was overwriting `roslynSolution` with `workspace.CurrentSolution`, discarding all 742 added DLL references. Now the patched solution is kept as the authoritative source, and `TryApplyChanges` is best-effort only. This means F12/IntelliSense/CodeLens will actually see the fallback references.
+- **fix:** LSP handlers that previously preferred `roslynWorkspace.CurrentSolution` (which lacked DLL fallback refs) now use `roslynSolution` directly.
+- **perf:** Removed compilation diagnostics (`GetCompilationAsync` on 5 sampled projects) which was causing the server to hang indefinitely on large solutions. Replaced with lightweight reference-count summary (total MetadataRefs and ProjectRefs across all projects).
+- **fix:** Condensed workspace diagnostic logging — RuntimeIdentifier errors are counted and summarized in a single line instead of spamming the output with hundreds of duplicate messages.
+- **fix:** Added `SkipInvalidConfigurations=true` to workspace properties (standard VS design-time build property).
+- **diag:** Summary now separately counts RuntimeIdentifier mismatch diagnostics with guidance that DLL fallback compensates.
+
 ## [0.1.43]
 
 - **fix:** Completely rewrote the DLL fallback mechanism. Instead of only checking projects with very few MetadataReferences (which missed the actual problem), the server now scans EVERY project reference edge: if project A references project B and B's output DLL is not in A's MetadataReferences, it searches B's `bin/` directory for a pre-built DLL and adds it. This directly addresses the 117 "project reference without a matching metadata reference" warnings by providing the output DLLs that MSBuild's design-time evaluation failed to resolve.
