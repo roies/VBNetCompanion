@@ -2,7 +2,7 @@
 
 > **Full IDE-grade language support for VB.NET in VS Code** — powered by a bundled Roslyn server that understands your whole solution, VB.NET *and* C# together.
 
-VB.NET has been a second-class citizen in VS Code for too long. VB.NET Companion fixes that by shipping a complete language server with **18 LSP features** including IntelliSense, hover docs, rename, call hierarchy, inlay hints, and more — all working cross-language across your entire solution.
+VB.NET has been a second-class citizen in VS Code for too long. VB.NET Companion fixes that by shipping a complete language server with **20+ LSP features** including IntelliSense, hover docs, rename, call hierarchy, inlay hints, and more — all working cross-language across your entire solution.
 
 ---
 

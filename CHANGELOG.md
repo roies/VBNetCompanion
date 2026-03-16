@@ -8,6 +8,11 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - No pending unreleased changes.
 
+## [0.1.46]
+
+- **docs:** Updated root README to reflect 20+ LSP features (was incorrectly stated as 18).
+- **docs:** Rewrote server README to document all 24 LSP capabilities, Roslyn `MSBuildWorkspace` architecture, fallback system, metadata stub generation, and updated run instructions.
+
 ## [0.1.45]
 
 - **fix:** Critical startup hang — `workspace.TryApplyChanges()` was blocking indefinitely when applying 742 MetadataReference additions (DLL fallback) to MSBuildWorkspace. MSBuildWorkspace does not support adding MetadataReferences, causing it to hang. This blocked the workspace load semaphore, preventing ALL LSP handlers (F12, Hover, IntelliSense, CodeLens) from responding. Removed both TryApplyChanges calls at startup; roslynSolution with fallback refs is used directly.
