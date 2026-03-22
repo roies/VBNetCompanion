@@ -20,8 +20,6 @@ const FEATURE_ORDER: FeatureName[] = ['definition', 'completion', 'references', 
 
 const PROBE_TIMEOUT_MS = 5000;
 
-const probeDocumentCache = new Map<DotnetLanguage, vscode.Uri>();
-
 function withTimeout<T>(thenable: Thenable<T>, ms: number): Promise<T> {
 	return new Promise<T>((resolve, reject) => {
 		const timer = setTimeout(() => reject(new Error(`Probe timed out after ${ms}ms`)), ms);
@@ -156,13 +154,6 @@ async function probeLanguage(language: DotnetLanguage): Promise<LanguageProbeSum
 		};
 	}
 
-	// Snapshot currently open tabs so we can close any the probe opens.
-	const tabsBefore = new Set(
-		vscode.window.tabGroups.all.flatMap(g => g.tabs).map(t =>
-			t.input instanceof vscode.TabInputText ? t.input.uri.toString() : undefined
-		).filter((u): u is string => !!u)
-	);
-
 	const position = selectProbePosition(document);
 	const range = new vscode.Range(position, position);
 
@@ -173,14 +164,6 @@ async function probeLanguage(language: DotnetLanguage): Promise<LanguageProbeSum
 		probeRename(document.uri, position),
 		probeCodeActions(document.uri, range)
 	]);
-
-	// Close any tabs the probe opened that were not visible before.
-	for (const tab of vscode.window.tabGroups.all.flatMap(g => g.tabs)) {
-		if (!(tab.input instanceof vscode.TabInputText)) { continue; }
-		const tabUri = tab.input.uri.toString();
-		if (tabsBefore.has(tabUri)) { continue; }
-		await vscode.window.tabGroups.close(tab).then(undefined, () => {/* ignore */});
-	}
 
 	return {
 		language,
@@ -295,7 +278,6 @@ async function getOrCreateProbeDocument(language: DotnetLanguage): Promise<vscod
 		const preferred = existing.filter(uri => !isDesignerOrGenerated(uri));
 		const chosen = preferred.length > 0 ? preferred[0] : existing[0];
 
-		probeDocumentCache.delete(language); // real files always win
 		return vscode.workspace.openTextDocument(chosen);
 	}
 

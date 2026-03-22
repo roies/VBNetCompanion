@@ -284,11 +284,6 @@ export function activate(context: vscode.ExtensionContext) {
 			triggerStatusRefresh();
 		}
 	}));
-	context.subscriptions.push(vscode.workspace.onDidOpenTextDocument((doc) => {
-		if (/\.(cs|vb)$/i.test(doc.fileName)) {
-			triggerStatusRefresh();
-		}
-	}));
 	context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event) => {
 		if (event.affectsConfiguration('vbnetcompanion')) {
 			triggerStatusRefresh();
